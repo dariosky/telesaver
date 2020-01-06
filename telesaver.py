@@ -128,9 +128,8 @@ class DialogSaver:
                 datetime=message.date.timestamp(),
                 silent=message.silent,
                 from_scheduled=message.from_scheduled,
+                edit_date=message.edit_date.timestamp() if message.edit_date else None,
             )
-            # if isinstance(message.to_id, PeerUser):
-            #     msg['target'] = message.to_id.user_id
 
             msg = {k: v for k, v in msg.items() if v}  # get rid of Falsey
             if message.media and not isinstance(message.media, DONT_SAVE_MEDIA_TYPES):
@@ -138,15 +137,18 @@ class DialogSaver:
                 msg.update(media_metadata)
 
             self.check_changed(message_id, msg)
+            is_known_message = message_id in self.known
             scanned_messages += 1
+            self.known[message_id] = msg
+
+            # exit conditions
             if isinstance(recent_only, datetime.datetime):
                 if message.date < recent_only:
                     logger.debug("We reached a older message - skipping the remaining")
                     break
-            elif recent_only and message_id in self.known:
+            elif recent_only and is_known_message:
                 logger.debug("We reached a known message - skipping the remaining")
                 break
-            self.known[message_id] = msg
 
         logger.debug(f"Scanned {scanned_messages} messages")
         self.save_store()
@@ -226,9 +228,14 @@ if __name__ == '__main__':
                         dest='dont_save_self_destructing',
                         action="store_true")
 
+    parser.add_argument("--debug",
+                        help="Verbose loggin active",
+                        default=False,
+                        action="store_true")
+
     args = parser.parse_args()
 
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.DEBUG if args.debug else logging.INFO)
     with TelegramClient('.session', api_id, api_hash) as client:
         client.loop.run_until_complete(
             main(
