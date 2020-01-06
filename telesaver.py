@@ -62,12 +62,13 @@ def get_user_name(user):
 
 
 class DialogSaver:
-    def __init__(self, dialog) -> None:
+    def __init__(self, dialog, save_self_destructing=False) -> None:
         super().__init__()
         self.dialog = dialog
         self.folder_path = f"store/{dialog.id}"
         self.create_store_folder()
         self.changed = False
+        self.save_self_destructing = save_self_destructing
 
     def create_store_folder(self):
         if not os.path.isdir(self.folder_path):
@@ -110,6 +111,11 @@ class DialogSaver:
                         os.utime(full_path, (mod_time, mod_time))
                     except:
                         pass
+                    if media.ttl_seconds:
+                        metadata['self_destructing'] = media.ttl_seconds
+                        if self.save_self_destructing:
+                            logger.info("Saving self-distructing media")
+                            await client.send_file('me', path)  # send the self_destructing to me
             else:
                 logger.debug(f"File {file_name} already saved, skipping")
             metadata['media'] = file_name
@@ -200,7 +206,7 @@ async def main(dialog_id=None, recent_only=True, save_self_destructing=True):
                 logger.debug(f"Skipping archived {dialog.name}")
                 continue
             logger.debug(f"{dialog.name} has ID {dialog.id}")
-            saver = DialogSaver(dialog)
+            saver = DialogSaver(dialog, save_self_destructing=save_self_destructing)
             await saver.run(
                 recent_only=recent_only,
                 # recent_only=pytz.utc.localize(datetime.datetime.utcnow()) - datetime.timedelta(days=5)
