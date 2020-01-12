@@ -180,11 +180,17 @@ class DialogSaver:
         if not known_message:
             logger.info(f"New message: {msg}")
             self.changed = True
-        elif known_message != msg:
+        elif msg != {k: v
+                     for k, v in known_message.items()
+                     if k != 'prev'}:
             changes = {k: v
                        for k, v in msg.items()
                        if msg[k] != known_message.get(k)}
             logger.info(f"Changed message: {changes}")
+            if msg.get('text') != known_message.get('text'):
+                if 'prev' not in msg:
+                    msg['prev'] = []
+                msg['prev'].append(known_message.get('text'))
             self.changed = True
 
     def save_store(self):
