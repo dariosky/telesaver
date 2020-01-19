@@ -12,13 +12,15 @@ from telethon.client import DownloadMethods
 from telethon.tl import types
 from telethon.tl.types import MessageMediaWebPage, MessageMediaGeo
 
+from sqlitestorage import Store
+from util import slugify
+
 logger = logging.getLogger(__name__)
 title = "TeleSave"
 api_id = os.environ.get('TELEGRAM_API_ID')
 api_hash = os.environ.get('TELEGRAM_API_HASH')
 
 DONT_SAVE_MEDIA_TYPES = (MessageMediaWebPage, MessageMediaGeo)
-
 
 def get_media_name(media, date):
     possible_names = []
@@ -57,18 +59,39 @@ def get_media_name(media, date):
                f'{extension}'
 
 
-def get_user_name(user):
-    return user.username or user.first_name
-
-
 class DialogSaver:
-    def __init__(self, dialog, save_self_destructing=False) -> None:
+    def __init__(self, store, dialog, save_self_destructing=False) -> None:
         super().__init__()
+        self.store = store
         self.dialog = dialog
-        self.folder_path = f"store/{dialog.id}"
-        self.create_store_folder()
         self.changed = False
         self.save_self_destructing = save_self_destructing
+
+        dialog_folder_name = self.get_folder_name()
+        self.folder_path = f"store/{dialog_folder_name}"
+        old_path = f"store/{dialog.id}"
+        if os.path.exists(old_path):
+            logger.info("Moving from the old path to the a more descriptive one")
+            os.rename(old_path, self.folder_path)
+        self.create_store_folder()
+
+    def get_user_name(self, user=None):
+        if user is None:
+            return self.dialog.name
+        else:
+            return user.username or user.first_name
+
+    def get_folder_name(self):
+        dialog_id = self.dialog.id
+        known_dialogs = self.store.dialog_names
+        if dialog_id in known_dialogs:
+            return known_dialogs[dialog_id]['folder']
+        logger.info(f"Adding new dialog info: {self.dialog.name}")
+        folder_name = slugify(self.get_user_name())
+        store.add_dialog(
+            dialog_id, self.dialog.name, folder_name
+        )
+        return folder_name
 
     def create_store_folder(self):
         if not os.path.isdir(self.folder_path):
@@ -78,21 +101,17 @@ class DialogSaver:
 
     @cached_property
     def known(self):
-        if os.path.isfile(self.store_file_path):
-            with open(self.store_file_path, 'r') as f:
-                known = json.load(f)
-        else:
-            known = {}
+        known = self.store.known_messages(self.dialog.id)
         logger.debug(f"Loaded {len(known)} known messages")
         return known
 
     @cached_property
     def store_file_path(self):
-        return os.path.join('store', str(self.dialog.id), 'store.json')
+        return os.path.join(self.folder_path, 'store.json')
 
     @cached_property
     def media_dir_path(self):
-        return os.path.join('store', str(self.dialog.id), 'media')
+        return os.path.join(self.folder_path, 'media')
 
     async def save_media(self, message):
         metadata = {}
@@ -125,16 +144,16 @@ class DialogSaver:
         scanned_messages = 0
         async for message in client.iter_messages(self.dialog):
             # print(message.id, message.text)
-            message_id = str(message.id)
-            sender_name = get_user_name(message.sender)
+            message_id = message.id
 
             msg = dict(
+                id=message_id,
                 text=message.text,
                 sender=message.from_id if not message.sender.is_self else None,  # sender only if it's not me
-                datetime=message.date.timestamp(),
+                datetime=message.date,
                 silent=message.silent,
                 from_scheduled=message.from_scheduled,
-                edit_date=message.edit_date.timestamp() if message.edit_date else None,
+                edit_date=message.edit_date,
             )
 
             msg = {k: v for k, v in msg.items() if v}  # get rid of Falsey
@@ -145,6 +164,7 @@ class DialogSaver:
             self.check_changed(message_id, msg)
             is_known_message = message_id in self.known
             scanned_messages += 1
+            self.store.add_msg(self.dialog.id, msg)
             self.known[message_id] = msg
 
             # exit conditions
@@ -157,7 +177,7 @@ class DialogSaver:
                 break
 
         logger.debug(f"Scanned {scanned_messages} messages")
-        self.save_store()
+        self.store.save()
         self.scan_unreferenced_media(delete=False)
 
     def scan_unreferenced_media(self, delete=False):
@@ -202,7 +222,7 @@ class DialogSaver:
             json.dump(self.known, f)
 
 
-async def main(dialog_id=None, recent_only=True, save_self_destructing=True):
+async def main(store: 'Store', dialog_id=None, recent_only=True, save_self_destructing=True):
     async for dialog in client.iter_dialogs():
         if dialog_id is None or dialog.id == dialog_id:
             if dialog.is_channel:
@@ -212,7 +232,9 @@ async def main(dialog_id=None, recent_only=True, save_self_destructing=True):
                 logger.debug(f"Skipping archived {dialog.name}")
                 continue
             logger.debug(f"{dialog.name} has ID {dialog.id}")
-            saver = DialogSaver(dialog, save_self_destructing=save_self_destructing)
+            saver = DialogSaver(store=store,
+                                dialog=dialog,
+                                save_self_destructing=save_self_destructing)
             await saver.run(
                 recent_only=recent_only,
                 # recent_only=pytz.utc.localize(datetime.datetime.utcnow()) - datetime.timedelta(days=5)
@@ -248,11 +270,14 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     logger.setLevel(logging.DEBUG if args.debug else logging.INFO)
+    store = Store()
     with TelegramClient('.session', api_id, api_hash) as client:
         client.loop.run_until_complete(
             main(
+                store=store,
                 recent_only=not args.all,
                 save_self_destructing=not args.dont_save_self_destructing,
             )
         )
+    store.close()
     logger.debug("Fin.")
