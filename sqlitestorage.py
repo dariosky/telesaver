@@ -6,12 +6,17 @@ import sqlite3
 
 import pytz
 from cached_property import cached_property
-from dateutil.parser import parse
 
 DB_FIELDS = ['id', 'datetime', 'text', 'sender', 'media']
 logger = logging.getLogger(__name__)
 DATETIME_FIELDS = ('datetime', 'edit_date')
-TIME_FORMAT = '%Y-%m-%d %H:%M:%S'
+TIME_FORMAT = '%Y-%m-%d %H:%M:%S%z'
+
+
+def parse(dt):
+    return datetime.datetime.strptime(
+        dt, TIME_FORMAT
+    )
 
 
 class Store:
@@ -74,7 +79,7 @@ class Store:
                 msg[field] = datetime.datetime.fromtimestamp(msg[field])
             if isinstance(msg[field], datetime.datetime):
                 assert msg[field].tzinfo == datetime.timezone.utc
-                msg[field] = msg[field].strftime(TIME_FORMAT + "%z")
+                msg[field] = msg[field].strftime(TIME_FORMAT)
         extra = {k: v
                  for k, v in msg.items()
                  if k not in DB_FIELDS}
