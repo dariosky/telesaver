@@ -7,16 +7,12 @@ import sqlite3
 import pytz
 from cached_property import cached_property
 
+from util import dict_factory, parse
+
 DB_FIELDS = ['id', 'datetime', 'text', 'sender', 'media']
 logger = logging.getLogger(__name__)
 DATETIME_FIELDS = ('datetime', 'edit_date')
 TIME_FORMAT = '%Y-%m-%d %H:%M:%S%z'
-
-
-def parse(dt):
-    return datetime.datetime.strptime(
-        dt, TIME_FORMAT
-    )
 
 
 class Store:
@@ -155,13 +151,37 @@ class Store:
                     continue
                 tz_field = msg[field]
                 if isinstance(tz_field, str):
-                    msg[field] = parse(tz_field)
+                    msg[field] = parse(tz_field, TIME_FORMAT)
             return {k: v for k, v in msg.items() if v}  # get rid of Falsey
 
         return {
             r[0]: get_msg(r)
             for r in self.cur.fetchall()
         }
+
+    def log(self, number=10):
+        """ Display the last messages """
+        query = """
+                    SELECT datetime, text, sender, media, extra, d.name as dialog_name
+                    from messages m
+                    left join dialogs d on m.sender = d.id
+                    order by datetime desc
+                    limit ?
+                """
+        self.cur.execute(query, (number,))
+
+        def get_msg(r):
+            msg = dict_factory(self.cur, r)
+            extra = json.loads(msg['extra'])  # add the content of extra
+            msg.update(extra)
+
+            msg = f"{msg['datetime']} " \
+                  f"- {'me' if msg['sender'] is None else msg['dialog_name']} - " \
+                  f"{msg['text'] or msg['media']}"
+            return msg
+
+        for r in self.cur.fetchall():
+            print(get_msg(r))
 
 
 def json_to_sqlite():
@@ -197,7 +217,7 @@ def convert_msg_to_utc():
                     # convert from CET to UTC
                     tz_field = msg[field]
                     if isinstance(tz_field, str):
-                        tz_field = parse(tz_field)
+                        tz_field = parse(tz_field, TIME_FORMAT)
                     elif isinstance(tz_field, float):
                         tz_field = datetime.datetime.fromtimestamp(tz_field)
                     if not tz_field.tzinfo:
@@ -217,6 +237,7 @@ if __name__ == '__main__':
         level=logging.DEBUG
     )
 
-    json_to_sqlite()
-    convert_msg_to_utc()
+    # json_to_sqlite()
+    # convert_msg_to_utc()
+    store.log()
     store.close()

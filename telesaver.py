@@ -22,6 +22,7 @@ api_hash = os.environ.get('TELEGRAM_API_HASH')
 
 DONT_SAVE_MEDIA_TYPES = (MessageMediaWebPage, MessageMediaGeo)
 
+
 def get_media_name(media, date):
     possible_names = []
     if isinstance(media, types.MessageMediaWebPage):
@@ -263,7 +264,12 @@ if __name__ == '__main__':
                         action="store_true")
 
     parser.add_argument("--debug",
-                        help="Verbose loggin active",
+                        help="Verbose logging active",
+                        default=False,
+                        action="store_true")
+
+    parser.add_argument("--log",
+                        help="Log the latest messages",
                         default=False,
                         action="store_true")
 
@@ -271,13 +277,16 @@ if __name__ == '__main__':
 
     logger.setLevel(logging.DEBUG if args.debug else logging.INFO)
     store = Store()
-    with TelegramClient('.session', api_id, api_hash) as client:
-        client.loop.run_until_complete(
-            main(
-                store=store,
-                recent_only=not args.all,
-                save_self_destructing=not args.dont_save_self_destructing,
+    if args.log:
+        store.log()
+    else:
+        with TelegramClient('.session', api_id, api_hash) as client:
+            client.loop.run_until_complete(
+                main(
+                    store=store,
+                    recent_only=not args.all,
+                    save_self_destructing=not args.dont_save_self_destructing,
+                )
             )
-        )
     store.close()
     logger.debug("Fin.")
