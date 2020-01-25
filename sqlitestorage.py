@@ -175,9 +175,20 @@ class Store:
             extra = json.loads(msg['extra'])  # add the content of extra
             msg.update(extra)
 
-            msg = f"{msg['datetime']} " \
-                  f"- {'me' if msg['sender'] is None else msg['dialog_name']} - " \
-                  f"{msg['text'] or msg['media']}"
+            tokens = [
+                f"{msg['datetime']}",
+                f"- {'me' if msg['sender'] is None else msg['dialog_name']} -",
+                f"{msg['text'] or msg['media']}"
+            ]
+            if msg.get('silent'):
+                tokens.append("[silent]")
+            if msg.get('scheduled'):
+                tokens.append("[scheduled]")
+            if msg.get('edit_date'):
+                tokens.append("[edited]")
+
+            msg = " ".join(tokens)
+
             return msg
 
         for r in self.cur.fetchall():

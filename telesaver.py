@@ -280,7 +280,7 @@ if __name__ == '__main__':
     if args.log:
         store.log()
     else:
-        with TelegramClient('.session', api_id, api_hash) as client:
+        with TelegramClient('secret/.session', api_id, api_hash) as client:
             client.loop.run_until_complete(
                 main(
                     store=store,
