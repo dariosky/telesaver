@@ -7,7 +7,7 @@ import sqlite3
 import pytz
 from cached_property import cached_property
 
-from util import dict_factory, parse
+from util import dict_factory, parse_time
 
 DB_FIELDS = ['id', 'datetime', 'text', 'sender', 'media']
 logger = logging.getLogger(__name__)
@@ -151,7 +151,7 @@ class Store:
                     continue
                 tz_field = msg[field]
                 if isinstance(tz_field, str):
-                    msg[field] = parse(tz_field, TIME_FORMAT)
+                    msg[field] = parse_time(tz_field)
             return {k: v for k, v in msg.items() if v}  # get rid of Falsey
 
         return {
@@ -228,7 +228,7 @@ def convert_msg_to_utc():
                     # convert from CET to UTC
                     tz_field = msg[field]
                     if isinstance(tz_field, str):
-                        tz_field = parse(tz_field, TIME_FORMAT)
+                        tz_field = parse_time(tz_field)
                     elif isinstance(tz_field, float):
                         tz_field = datetime.datetime.fromtimestamp(tz_field)
                     if not tz_field.tzinfo:

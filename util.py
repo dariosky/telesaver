@@ -15,10 +15,16 @@ def slugify(value):
     return ''.join(chr(c) for c in cleaned_value if chr(c) in valid_chars)
 
 
-def parse(dt, TIME_FORMAT):
-    return datetime.datetime.strptime(
-        dt, TIME_FORMAT
-    )
+def parse_time(dt):
+    time_formats = ('%Y-%m-%d %H:%M:%S%z', '%Y-%m-%d %H:%M:%S')
+    for time_format in time_formats:
+        try:
+            return datetime.datetime.strptime(
+                dt, time_format
+            )
+        except:
+            pass
+    raise Exception(f'Unknown timeformat for {dt}')
 
 
 def dict_factory(cursor, row):
