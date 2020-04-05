@@ -44,7 +44,10 @@ def get_media_name(media, date):
     elif isinstance(media, (types.MessageMediaGeoLive, types.Document)):
         return
     else:
-        logger.error(f"Unknow media type: {type(media)}")
+        if media is None:
+            logger.debug("Expired message is gone")
+        else:
+            logger.error(f"Unknow media type: {type(media)}")
         return
 
     if possible_names:
@@ -273,6 +276,11 @@ if __name__ == '__main__':
                         default=False,
                         action="store_true")
 
+    parser.add_argument("--config",
+                        help="Choose another config file",
+                        default='secret/.session',
+                        action="store")
+
     args = parser.parse_args()
 
     logger.setLevel(logging.DEBUG if args.debug else logging.INFO)
@@ -280,7 +288,7 @@ if __name__ == '__main__':
     if args.log:
         store.log()
     else:
-        with TelegramClient('secret/.session', api_id, api_hash) as client:
+        with TelegramClient(args.config, api_id, api_hash) as client:
             client.loop.run_until_complete(
                 main(
                     store=store,
