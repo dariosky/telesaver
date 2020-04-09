@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 import argparse
 import datetime
-import json
 import logging
 import os
+import shutil
+import tempfile
 import time
 
 from cached_property import cached_property
@@ -13,7 +14,7 @@ from telethon.tl import types
 from telethon.tl.types import MessageMediaWebPage, MessageMediaGeo
 
 from sqlitestorage import Store
-from util import slugify
+from util import slugify, file_hash
 
 logger = logging.getLogger(__name__)
 title = "TeleSave"
@@ -70,14 +71,12 @@ class DialogSaver:
         self.dialog = dialog
         self.changed = False
         self.save_self_destructing = save_self_destructing
-
-        dialog_folder_name = self.get_folder_name()
-        self.folder_path = f"store/{dialog_folder_name}"
-        old_path = f"store/{dialog.id}"
-        if os.path.exists(old_path):
-            logger.info("Moving from the old path to the a more descriptive one")
-            os.rename(old_path, self.folder_path)
-        self.create_store_folder()
+        known_dialogs = self.store.dialog_names
+        dialog_id = self.dialog.id
+        if dialog_id not in known_dialogs:
+            store.add_dialog(
+                dialog_id, self.dialog.name, self.get_folder_name()
+            )
 
     def get_user_name(self, user=None):
         if user is None:
@@ -92,16 +91,7 @@ class DialogSaver:
             return known_dialogs[dialog_id]['folder']
         logger.info(f"Adding new dialog info: {self.dialog.name}")
         folder_name = slugify(self.get_user_name())
-        store.add_dialog(
-            dialog_id, self.dialog.name, folder_name
-        )
         return folder_name
-
-    def create_store_folder(self):
-        if not os.path.isdir(self.folder_path):
-            os.mkdir(self.folder_path)
-        if not os.path.isdir(self.media_dir_path):
-            os.mkdir(self.media_dir_path)
 
     @cached_property
     def known(self):
@@ -110,25 +100,45 @@ class DialogSaver:
         return known
 
     @cached_property
-    def store_file_path(self):
-        return os.path.join(self.folder_path, 'store.json')
-
-    @cached_property
     def media_dir_path(self):
-        return os.path.join(self.folder_path, 'media')
+        dialog_folder_name = self.get_folder_name()  # this creates the dialog
+        return os.path.join('store', dialog_folder_name, 'media')
 
     async def save_media(self, message):
         metadata = {}
         media = message.media
-        file_name = get_media_name(media, message.date)
-        if file_name:
+        if message.id in self.known:
+            # the message is know - use its media
+            full_path = self.known[message.id].get('media')
+            if not full_path:
+                logger.warning(f"The media is known but without filename {media}")
+        else:
+            file_name = get_media_name(media, message.date)
+            if not file_name:
+                logger.debug(f"We don't save the {media}")
+                return {}
             full_path = os.path.join(self.media_dir_path, file_name)
+        if full_path:
             if not os.path.isfile(full_path):
-                path = await message.download_media(full_path)
-                if not path:
-                    logger.warning("Missing path after save?")
-                else:
-                    logger.info(f'File saved to {path}')
+                new_file = True
+                with tempfile.NamedTemporaryFile() as fp:
+                    path = await message.download_media(fp.name)
+                    if not path:
+                        logger.error(f"Error: Missing path after save? {message}")
+                        return {}
+                    else:
+                        fp.seek(0)
+                        hash = file_hash(path)
+                        known = store.known_media_hash(hash)
+                        if known:
+                            first_known = known[0]
+                            logger.debug(f"This file is new but known as {first_known} - I'll reuse it")
+                            full_path = known[0]
+                            new_file = False
+                        else:
+                            shutil.copy2(path, full_path)
+                if new_file:
+                    logger.info(f'File saved to {full_path}')
                     try:
                         mod_time = time.mktime(message.date.timetuple())
                         os.utime(full_path, (mod_time, mod_time))
@@ -141,8 +151,8 @@ class DialogSaver:
                             await client.send_file('me', path,
                                                    caption=message.text)  # send the self_destructing to me
             else:
-                logger.debug(f"File {file_name} already saved, skipping")
-            metadata['media'] = file_name
+                logger.debug(f"File {full_path} already saved, skipping")
+        metadata['media'] = full_path
         return metadata
 
     async def run(self, recent_only=False):
@@ -183,48 +193,34 @@ class DialogSaver:
 
         logger.debug(f"Scanned {scanned_messages} messages")
         self.store.save()
-        self.scan_unreferenced_media(delete=False)
-
-    def scan_unreferenced_media(self, delete=False):
-        media_files = set(os.listdir(self.media_dir_path))
-        referenced_media = {msg['media']
-                            for msg in self.known.values()
-                            if 'media' in msg}
-        stale_files = media_files - referenced_media
-        if stale_files:
-            logger.debug(f"We have {len(stale_files)} stale files")
-            for stale_filename in stale_files:
-                if delete:
-                    logger.info(f"Deleting stale {stale_filename}")
-                    os.remove(os.path.join(self.media_dir_path, stale_filename))
-                else:
-                    logger.debug(f"Stale {stale_filename}")
 
     def check_changed(self, message_id, msg):
         known_message = self.known.get(message_id)
         if not known_message:
             logger.info(f"New message: {msg}")
             self.changed = True
-        elif msg != {k: v
-                     for k, v in known_message.items()
-                     if k != 'prev'}:
+            return
+
+        if msg != {  # see if the fields that we have have changed
+            k: known_message.get(k)
+            for k in msg
+        }:
             changes = {k: v
                        for k, v in msg.items()
                        if msg[k] != known_message.get(k)}
             logger.info(f"Changed message: {changes}")
+            self.changed = True
+
+        if known_message:
+            for field in known_message:
+                # keep all the extra fields to the message
+                if field not in msg:
+                    msg[field] = known_message[field]
             if msg.get('text') != known_message.get('text'):
+                # keep the history of previous edit
                 if 'prev' not in msg:
                     msg['prev'] = []
                 msg['prev'].append(known_message.get('text'))
-            self.changed = True
-
-    def save_store(self):
-        if not self.changed:
-            logger.debug("Nothing changed - skipping save")
-            return
-        with open(self.store_file_path, 'w') as f:
-            logger.debug(f"Saving know {len(self.known)} messages")
-            json.dump(self.known, f)
 
 
 async def main(store: 'Store', dialog_id=None, recent_only=True, save_self_destructing=True):

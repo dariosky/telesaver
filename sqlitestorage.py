@@ -2,12 +2,13 @@ import datetime
 import json
 import logging
 import os
+import shutil
 import sqlite3
 
 import pytz
 from cached_property import cached_property
 
-from util import dict_factory, parse_time
+from util import dict_factory, parse_time, file_hash
 
 DB_FIELDS = ['id', 'datetime', 'text', 'sender', 'media']
 logger = logging.getLogger(__name__)
@@ -194,6 +195,96 @@ class Store:
         for r in self.cur.fetchall():
             print(get_msg(r))
 
+    def consolidate_media(self, commit=False):
+        media_hash_to_path = {}
+        for dialog_id, dialog in self.dialog_names.items():
+            logger.debug(f"Dialog: {dialog['name']}")
+            messages = self.known_messages(dialog_id).items()
+
+            if not messages:
+                dialog_path = os.path.join('store', dialog['folder'], )
+                if os.path.isdir(dialog_path):
+                    logger.info(f"Removing dialog {dialog_path}")
+                    if commit:
+                        shutil.rmtree(dialog_path)
+
+            for msgid, message in messages:
+                path = message.get('media')
+                changed = False
+                if path:
+                    if not os.path.isfile(path):
+                        # path is not absolute - let's change it
+                        new_path = os.path.join(
+                            'store',
+                            dialog['folder'],
+                            'media',
+                            path)
+
+                        if os.path.isfile(new_path):
+                            # set the absolute path
+                            path = new_path
+                            message['media'] = new_path
+                            changed = True
+
+                    if not os.path.isfile(path):
+                        logger.error(f"Media not found: {path}")
+                        continue
+
+                    # here the path is valid
+                    if 'hash' not in message:
+                        changed = True
+                        message['hash'] = file_hash(path)
+
+                    if 'size' not in message:
+                        message['size'] = os.path.getsize(path)
+                        changed = True
+
+                    mediaid = message['hash']
+                    if mediaid in media_hash_to_path and path != media_hash_to_path[mediaid]:
+                        logger.info("I know this media - let's change this message")
+                        # and delete the file
+                        message['media'] = media_hash_to_path[mediaid]
+                        changed = True
+                        os.makedirs('duplicates', exist_ok=True)
+                        shutil.copy(path, 'duplicates')
+                        if commit:
+                            os.remove(path)
+                    else:
+                        media_hash_to_path[mediaid] = path
+
+                    if changed:
+                        logger.debug(f"Changed: {message}")
+                        if commit:
+                            self.add_msg(dialog_id, message)
+
+    def scan_unreferenced_media(self, media_hash_to_path, commit=False):
+        existing_media_files = set()
+        for root, dirs, files in os.walk('store'):
+            for filename in files:
+                existing_media_files.add(
+                    os.path.join(root, filename)
+                )
+        referenced_media = set(media_hash_to_path.values())
+        stale_files = existing_media_files - referenced_media
+        if stale_files:
+            logger.debug(f"We have {len(stale_files)} stale files")
+            for stale_filename in stale_files:
+                if commit:
+                    logger.info(f"Deleting stale {stale_filename}")
+                    os.remove(stale_filename)
+                else:
+                    logger.debug(f"Stale {stale_filename}")
+
+    def known_media_hash(self, hash):
+        query = """
+            select media from messages
+            where json_extract(extra, '$.hash')=?
+        """
+        self.cur.execute(query, (hash,))
+        known = [r[0] for r in self.cur.fetchall()]
+        return known
+
+
 
 def json_to_sqlite():
     for folder in os.listdir('store'):
@@ -251,4 +342,7 @@ if __name__ == '__main__':
     # json_to_sqlite()
     # convert_msg_to_utc()
     store.log()
+    # store.consolidate_media(
+        # commit=True
+    # )
     store.close()
