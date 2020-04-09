@@ -138,7 +138,8 @@ class DialogSaver:
                         metadata['self_destructing'] = media.ttl_seconds
                         if self.save_self_destructing:
                             logger.info("Saving self-distructing media")
-                            await client.send_file('me', path)  # send the self_destructing to me
+                            await client.send_file('me', path,
+                                                   caption=message.text)  # send the self_destructing to me
             else:
                 logger.debug(f"File {file_name} already saved, skipping")
             metadata['media'] = file_name
