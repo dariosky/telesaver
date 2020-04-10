@@ -285,7 +285,6 @@ class Store:
         return known
 
 
-
 def json_to_sqlite():
     for folder in os.listdir('store'):
         file_path = os.path.join("store", folder, 'store.json')
@@ -343,6 +342,6 @@ if __name__ == '__main__':
     # convert_msg_to_utc()
     store.log()
     # store.consolidate_media(
-        # commit=True
+    # commit=True
     # )
     store.close()

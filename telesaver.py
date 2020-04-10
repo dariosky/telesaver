@@ -128,8 +128,9 @@ class DialogSaver:
                         return {}
                     else:
                         fp.seek(0)
-                        hash = file_hash(path)
-                        known = store.known_media_hash(hash)
+                        metadata['hash'] = file_hash(path)
+                        metadata['size'] = os.path.getsize(path)
+                        known = store.known_media_hash(metadata['hash'])
                         if known:
                             first_known = known[0]
                             logger.debug(f"This file is new but known as {first_known} - I'll reuse it")
@@ -148,10 +149,11 @@ class DialogSaver:
                         metadata['self_destructing'] = media.ttl_seconds
                         if self.save_self_destructing:
                             logger.info("Saving self-distructing media")
-                            await client.send_file('me', path,
+                            await client.send_file('me', full_path,
                                                    caption=message.text)  # send the self_destructing to me
             else:
-                logger.debug(f"File {full_path} already saved, skipping")
+                pass
+                # logger.debug(f"File {full_path} already saved, skipping")
         metadata['media'] = full_path
         return metadata
 
