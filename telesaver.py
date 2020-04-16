@@ -135,7 +135,11 @@ class DialogSaver:
                             first_known = known[0]
                             logger.debug(f"This file is new but known as {first_known} - I'll reuse it")
                             full_path = known[0]
-                            new_file = False
+                            if os.path.isfile(full_path):
+                                new_file = False
+                            else:
+                                logger.warning(f"File {full_path} was known but is missing - reinjecting it")
+                                shutil.copy2(path, full_path)
                         else:
                             shutil.copy2(path, full_path)
                 if new_file:
