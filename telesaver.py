@@ -64,6 +64,13 @@ def get_media_name(media, date):
                f'{extension}'
 
 
+def copy_in_folder(src, dst):
+    dst_folder = os.path.dirname(dst)
+    if not os.path.isdir(dst_folder):
+        os.makedirs(dst_folder)
+    shutil.copy2(src, dst)
+
+
 class DialogSaver:
     def __init__(self, store, dialog, save_self_destructing=False) -> None:
         super().__init__()
@@ -139,9 +146,9 @@ class DialogSaver:
                                 new_file = False
                             else:
                                 logger.warning(f"File {full_path} was known but is missing - reinjecting it")
-                                shutil.copy2(path, full_path)
+                                copy_in_folder(path, full_path)
                         else:
-                            shutil.copy2(path, full_path)
+                            copy_in_folder(path, full_path)
                 if new_file:
                     logger.info(f'File saved to {full_path}')
                     try:
