@@ -19,7 +19,7 @@ TIME_FORMAT = '%Y-%m-%d %H:%M:%S%z'
 class Store:
     def __init__(self, filename='store.sqlite'):
         """ create a database connection to a SQLite database """
-        self.conn = sqlite3.connect(filename)
+        self.conn = sqlite3.connect(filename or ':memory:')
         self.cur = self.conn.cursor()
         self.create_tables()
         self.changed = False
@@ -107,6 +107,8 @@ class Store:
                 """
         self.cur.execute(query,
                          params)
+        self.dialog_names[dialog_id] = dict(name=name,  # we know the new dialog
+                                            folder=folder)
         self.changed = True
 
     def save(self):
@@ -212,43 +214,44 @@ class Store:
                 path = message.get('media')
                 changed = False
                 if path:
-                    if not os.path.isfile(path):
+                    if not os.path.isfile("store/" + path):
                         # path is not absolute - let's change it
-                        new_path = os.path.join(
-                            'store',
-                            dialog['folder'],
-                            'media',
-                            path)
+                        new_path = path.replace('store/', '').replace("/media/", "/")
 
-                        if os.path.isfile(new_path):
+                        if os.path.isfile("store/" + new_path):
                             # set the absolute path
                             path = new_path
                             message['media'] = new_path
                             changed = True
 
-                    if not os.path.isfile(path):
+                    if not os.path.isfile("store/" + path):
                         logger.error(f"Media not found: {path}")
                         continue
 
                     # here the path is valid
                     if 'hash' not in message:
                         changed = True
-                        message['hash'] = file_hash(path)
+                        message['hash'] = file_hash("store/" + path)
 
                     if 'size' not in message:
-                        message['size'] = os.path.getsize(path)
+                        message['size'] = os.path.getsize("store/" + path)
                         changed = True
 
                     mediaid = message['hash']
-                    if mediaid in media_hash_to_path and path != media_hash_to_path[mediaid]:
-                        logger.info("I know this media - let's change this message")
-                        # and delete the file
-                        message['media'] = media_hash_to_path[mediaid]
-                        changed = True
-                        os.makedirs('duplicates', exist_ok=True)
-                        shutil.copy(path, 'duplicates')
-                        if commit:
-                            os.remove(path)
+
+                    if mediaid in media_hash_to_path:
+                        known_hash_path = media_hash_to_path[mediaid]
+                        if path != known_hash_path:
+                            logger.info(f"I know this media as {known_hash_path}- let's change this message")
+                            if os.path.isfile('store/' + known_hash_path):
+                                # and delete the file
+                                message['media'] = known_hash_path
+                                changed = True
+                                if os.path.isfile('store/' + path):
+                                    os.makedirs('duplicates', exist_ok=True)
+                                    shutil.copy('store/' + path, 'duplicates')
+                                    if commit:
+                                        os.remove('store/' + path)
                     else:
                         media_hash_to_path[mediaid] = path
 
@@ -340,8 +343,8 @@ if __name__ == '__main__':
 
     # json_to_sqlite()
     # convert_msg_to_utc()
-    store.log()
-    # store.consolidate_media(
-    # commit=True
-    # )
+    # store.log()
+    store.consolidate_media(
+        # commit=True
+    )
     store.close()
