@@ -69,6 +69,7 @@ class Store:
         if 'datetime' not in msg:
             logger.warning("Missing datetime on message", msg)
             return
+
         for field in DATETIME_FIELDS:
             if not msg.get(field):
                 continue
@@ -77,14 +78,17 @@ class Store:
             if isinstance(msg[field], datetime.datetime):
                 assert msg[field].tzinfo == datetime.timezone.utc
                 msg[field] = msg[field].strftime(TIME_FORMAT)
+
         extra = {k: v
                  for k, v in msg.items()
                  if k not in DB_FIELDS}
+
         params = (
                 [dialog_id] +
                 [msg.get(k)
                  for k in DB_FIELDS] +
                 [json.dumps(extra)])
+
         query = f"""
             INSERT OR REPLACE INTO messages
                 (dialog,{",".join(DB_FIELDS)},extra)
@@ -105,8 +109,7 @@ class Store:
                     VALUES
                         ({",".join(["?"] * len(params))});
                 """
-        self.cur.execute(query,
-                         params)
+        self.cur.execute(query, params)
         self.dialog_names[dialog_id] = dict(name=name,  # we know the new dialog
                                             folder=folder)
         self.changed = True

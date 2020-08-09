@@ -85,8 +85,10 @@ class DialogSaver:
         self._known = None
 
     def save_dialog(self, dialog_id, dialog_name):
+        logger.debug(f"Saving dialog {dialog_id} as {dialog_name}")
         known_dialogs = self.store.dialog_names
-        if dialog_id not in known_dialogs:
+        if (dialog_id not in known_dialogs
+                or known_dialogs[dialog_id]['name'] != dialog_name):
             self.store.add_dialog(
                 dialog_id, dialog_name,
                 folder=self.get_folder_name(dialog_id, dialog_name)
@@ -170,10 +172,20 @@ class DialogSaver:
         metadata['media'] = full_path
         return metadata
 
+    def set_message_attributes(self, dialog_id, message_id, attributes):
+        known_message = self.known(dialog_id).get(message_id)
+        if not known_message:
+            logger.warning(f"We didn't know the message - setting the attributes {attributes} however")
+            known_message = dict(id=message_id,
+                                 )
+        msg = {**known_message,
+               **attributes}
+        self.known(dialog_id)[message_id] = msg
+        self.store.add_msg(dialog_id, msg)
+
     async def process_message(self, message,
                               dialog_id,
-                              is_deleted=False,
-                              read_time=None,
+                              commit=True,  # commit every message?
                               ):
         # print(message.id, message.text)
         message_id = message.id
@@ -198,18 +210,20 @@ class DialogSaver:
         self.scanned_messages += 1
         self.store.add_msg(dialog_id, msg)
         self.known(dialog_id)[message_id] = msg
+        if commit:
+            self.store.save()
         return is_known_message
 
     async def run(self, recent_only=False):
         async for dialog in self.client.iter_dialogs():
-            if not filter_event(dialog):
+            if not await filter_event(dialog):
                 continue
             logger.debug(f"{dialog.name} has ID {dialog.id}")
             self.save_dialog(dialog.id, dialog.name)  # we know the dialog - let's save it
 
             async for message in self.client.iter_messages(dialog):
                 is_known_message = await self.process_message(
-                    message, dialog_id=dialog.id,
+                    message, dialog_id=dialog.id, commit=False,
                 )
 
                 # exit conditions
@@ -225,6 +239,7 @@ class DialogSaver:
         self.store.save()
 
     def check_changed(self, message_id, dialog_id, msg):
+        """ Fixme: this isn't nice - it set self.changes and modify the msg when edited """
         known_message = self.known(dialog_id).get(message_id)
         if not known_message:
             logger.info(f"New message: {msg}")

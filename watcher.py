@@ -1,20 +1,44 @@
 import logging
+from datetime import datetime
 
+from cachetools.func import ttl_cache
 from telethon import events
-from telethon.tl.types import Dialog
+from telethon.tl.custom import Dialog
+from telethon.utils import get_display_name
 
 logger = logging.getLogger(__name__)
 
 
-def filter_event(e):
-    if isinstance(e, Dialog):
-        name = e.name
+@ttl_cache(ttl=60 * 15)  # cache them for 15'
+async def get_dialogs(client):
+    """ Get the archived dialogs """
+    logger.debug("Getting archived Dialogs")
+    return {
+        dialog.id: dialog
+        for dialog in await client.get_dialogs()
+    }
+
+
+async def filter_event(event):
+    if not isinstance(event, Dialog):
+        if event is None or event.chat_id is None:
+            # the deletion events have no chat we move them ahead
+            return True
+    if event.is_channel:  # event if event is a Dialog will have this
+        logger.debug("Skipping channel")
+        return False
+    if not isinstance(event, Dialog):
+        dialogs = await get_dialogs(event.client)
+        try:
+            dialog = dialogs[event.chat_id]
+        except Exception as e:
+            logger.error(f"Can't get the dialog: {e}")
+            return True
     else:
-        name = e.title
-    if e.is_channel:
-        logger.debug(f"Skipping channel {name}")
-    elif e.archived:
-        logger.debug(f"Skipping archived {name}")
+        dialog = event
+
+    if dialog.archived:
+        logger.debug(f"Skipping archived {get_display_name(dialog)}")
     else:
         return True
 
@@ -27,22 +51,24 @@ async def wait_for_updates(saver):
 
     @client.on(events.NewMessage())
     @client.on(events.MessageEdited())
-    async def new_message_handler(event):
-        if not filter_event(event):
-            return
-        await saver.process_message(event.message)
+    async def message_updated_handler(event):
+        if await filter_event(event):
+            saver.save_dialog(event.chat.id, get_display_name(event.chat))  # the dialog
+            await saver.process_message(message=event.message,
+                                        dialog_id=event.chat_id)
 
     @client.on(events.MessageRead())
     async def message_read_handler(event):
-        print(event)
-        if not filter_event(event):
-            return
+        if await filter_event(event):
+            read_time = datetime.utcnow()
+            await saver.set_message_attributes(event.message.id,
+                                               {"read_time": read_time})
 
     @client.on(events.MessageDeleted())
-    async def message_read_handler(event):
-        print(event)
-        if not filter_event(event):
-            return
+    async def message_delete_handler(event):
+        if await filter_event(event):
+            await saver.set_message_attributes(event.message.id,
+                                               {"deleted": True})
 
     logger.info("Catching up")
     await client.catch_up()
