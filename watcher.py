@@ -52,6 +52,8 @@ async def wait_for_updates(saver):
     @client.on(events.NewMessage())
     @client.on(events.MessageEdited())
     async def message_updated_handler(event):
+        await event.get_chat()
+        await event.get_sender()
         if await filter_event(event):
             saver.save_dialog(event.chat.id, get_display_name(event.chat))  # the dialog
             await saver.process_message(message=event.message,
@@ -61,8 +63,12 @@ async def wait_for_updates(saver):
     async def message_read_handler(event):
         if await filter_event(event):
             read_time = datetime.utcnow()
-            saver.set_message_attributes(event.message.id,
-                                         {"read_time": read_time})
+            message_ids = event._message_ids or [event._message_id]
+            for message_id in message_ids:
+                saver.set_message_attributes(message_id,
+                                             {"read_time": read_time},
+                                             commit=False)
+            saver.commit()
 
     @client.on(events.MessageDeleted())
     async def message_delete_handler(event):
@@ -71,7 +77,7 @@ async def wait_for_updates(saver):
                 saver.set_message_attributes(message_id,
                                              {"deleted": True},
                                              commit=False)
-                saver.commit()
+            saver.commit()
 
     logger.info("Catching up")
     await client.catch_up()

@@ -180,11 +180,15 @@ class DialogSaver:
             dialog_id = None
         else:
             dialog_id = known_message.pop('dialog')
+        if not dialog_id:
+            logger.warning(f"Unknown message, unknown dialog - skipping")
+            return
         logger.info(f"Changed message: {known_message} - {attributes}")
         msg = {**known_message,
                **attributes}
 
-        self.known(dialog_id)[message_id] = msg
+        if message_id in self.known(dialog_id):
+            self.known(dialog_id)[message_id] = msg
         self.store.add_msg(dialog_id, msg)
         if commit:
             self.store.save()
@@ -290,7 +294,7 @@ async def main(
     else:
         await saver.run(
             recent_only=recent_only,
-            # recent_only=pytz.utc.localize(datetime.datetime.utcnow()) - datetime.timedelta(days=5)
+            # recent_only=pytz.utc.localize(datetime.datetime.utcnow()) - datetime.timedelta(days=2)
         )
 
 

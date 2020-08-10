@@ -67,7 +67,7 @@ class Store:
         msg = msg.copy()  # we change the datetime
 
         if 'datetime' not in msg:
-            logger.warning("Missing datetime on message", msg)
+            logger.warning("Missing datetime on message - skipping", msg)
             return
 
         for field in DATETIME_FIELDS:
