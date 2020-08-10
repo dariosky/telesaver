@@ -12,7 +12,7 @@ from util import dict_factory, parse_time, file_hash
 
 DB_FIELDS = ['id', 'datetime', 'text', 'sender', 'media']
 logger = logging.getLogger(__name__)
-DATETIME_FIELDS = ('datetime', 'edit_date')
+DATETIME_FIELDS = ('datetime', 'edit_date', 'read_time')
 TIME_FORMAT = '%Y-%m-%d %H:%M:%S%z'
 
 
