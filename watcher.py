@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 
-from cachetools.func import ttl_cache
+from aiocache import cached
 from telethon import events
 from telethon.tl.custom import Dialog
 from telethon.utils import get_display_name
@@ -9,7 +9,7 @@ from telethon.utils import get_display_name
 logger = logging.getLogger(__name__)
 
 
-@ttl_cache(ttl=60 * 15)  # cache them for 15'
+@cached(ttl=60 * 15)  # cache them for 15'
 async def get_dialogs(client):
     """ Get the archived dialogs """
     logger.debug("Getting archived Dialogs")
@@ -61,14 +61,17 @@ async def wait_for_updates(saver):
     async def message_read_handler(event):
         if await filter_event(event):
             read_time = datetime.utcnow()
-            await saver.set_message_attributes(event.message.id,
-                                               {"read_time": read_time})
+            saver.set_message_attributes(event.message.id,
+                                         {"read_time": read_time})
 
     @client.on(events.MessageDeleted())
     async def message_delete_handler(event):
         if await filter_event(event):
-            await saver.set_message_attributes(event.message.id,
-                                               {"deleted": True})
+            for message_id in event.deleted_ids:
+                saver.set_message_attributes(message_id,
+                                             {"deleted": True},
+                                             commit=False)
+                saver.commit()
 
     logger.info("Catching up")
     await client.catch_up()

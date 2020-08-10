@@ -172,16 +172,22 @@ class DialogSaver:
         metadata['media'] = full_path
         return metadata
 
-    def set_message_attributes(self, dialog_id, message_id, attributes):
-        known_message = self.known(dialog_id).get(message_id)
+    def set_message_attributes(self, message_id, attributes, commit=True):
+        known_message = self.store.known_message(message_id)
         if not known_message:
             logger.warning(f"We didn't know the message - setting the attributes {attributes} however")
-            known_message = dict(id=message_id,
-                                 )
+            known_message = dict(id=message_id)
+            dialog_id = None
+        else:
+            dialog_id = known_message.pop('dialog')
+        logger.info(f"Changed message: {known_message} - {attributes}")
         msg = {**known_message,
                **attributes}
+
         self.known(dialog_id)[message_id] = msg
         self.store.add_msg(dialog_id, msg)
+        if commit:
+            self.store.save()
 
     async def process_message(self, message,
                               dialog_id,
@@ -245,6 +251,16 @@ class DialogSaver:
             logger.info(f"New message: {msg}")
             self.changed = True
             return
+        else:
+            for field in known_message:
+                # keep all the extra fields to the message
+                if field not in msg:
+                    msg[field] = known_message[field]
+            if msg.get('text') != known_message.get('text'):
+                # keep the history of previous edit
+                if 'prev' not in msg:
+                    msg['prev'] = []
+                msg['prev'].append(known_message.get('text'))
 
         if msg != {  # see if the fields that we have have changed
             k: known_message.get(k)
@@ -256,16 +272,8 @@ class DialogSaver:
             logger.info(f"Changed message: {changes}")
             self.changed = True
 
-        if known_message:
-            for field in known_message:
-                # keep all the extra fields to the message
-                if field not in msg:
-                    msg[field] = known_message[field]
-            if msg.get('text') != known_message.get('text'):
-                # keep the history of previous edit
-                if 'prev' not in msg:
-                    msg['prev'] = []
-                msg['prev'].append(known_message.get('text'))
+    def commit(self):
+        self.store.save()
 
 
 async def main(

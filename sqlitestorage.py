@@ -135,13 +135,8 @@ class Store:
                            folder=r[2])
                 for r in self.cur.fetchall()}
 
-    def known_messages(self, dialog_id):
-        query = """
-                    SELECT id, datetime, text, sender, media, extra
-                    from messages
-                    where dialog=?
-                """
-        self.cur.execute(query, (dialog_id,))
+    def get_messages_from_cursor(self):
+        """ Return the record out of the cursor """
 
         def get_msg(r):
             msg = dict(
@@ -150,8 +145,10 @@ class Store:
                 text=r[2],
                 sender=r[3],
                 media=r[4],
-                **json.loads(r[5])
+                **json.loads(r[5]),
             )
+            if len(r) > 6:
+                msg['dialog'] = r[6]
             for field in DATETIME_FIELDS:
                 if field not in msg:
                     continue
@@ -164,6 +161,25 @@ class Store:
             r[0]: get_msg(r)
             for r in self.cur.fetchall()
         }
+
+    def known_messages(self, dialog_id):
+        query = """
+                    SELECT id, datetime, text, sender, media, extra
+                    from messages
+                    where dialog=?
+                """
+        self.cur.execute(query, (dialog_id,))
+        return self.get_messages_from_cursor()
+
+    def known_message(self, message_id):
+        query = """
+                    SELECT id, datetime, text, sender, media, extra, dialog
+                    from messages
+                    where id=?
+                """
+        self.cur.execute(query, (message_id,))
+        records = self.get_messages_from_cursor()
+        return records[message_id] if records else None
 
     def log(self, number=10):
         """ Display the last messages """

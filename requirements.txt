@@ -2,4 +2,5 @@ telethon
 cryptg
 cached_property
 pytz
-cachetools
+aiocache
+msgpack
