@@ -76,7 +76,8 @@ class Store:
             if isinstance(msg[field], float):
                 msg[field] = datetime.datetime.fromtimestamp(msg[field])
             if isinstance(msg[field], datetime.datetime):
-                assert msg[field].tzinfo == datetime.timezone.utc
+                if msg[field].tzinfo != datetime.timezone.utc:
+                    msg[field] = pytz.utc.localize(msg[field])
                 msg[field] = msg[field].strftime(TIME_FORMAT)
 
         extra = {k: v
@@ -329,8 +330,8 @@ def json_to_sqlite():
                                        "id": msg_id})
 
 
-def convert_msg_to_utc():
-    tz = pytz.timezone('CET')
+def convert_msg_to_utc(from_tz):
+    tz = pytz.timezone(from_tz)
     utc = pytz.utc
     for dialog_id, desc in store.dialog_names.items():
         known = store.known_messages(dialog_id)
