@@ -24,8 +24,12 @@ api_hash = os.environ.get('TELEGRAM_API_HASH')
 DONT_SAVE_MEDIA_TYPES = (MessageMediaWebPage, MessageMediaGeo)
 
 
-def get_media_name(media, date):
+def get_media_name(message):
+    media = message.media
+    date = message.date
+    group = message.grouped_id
     possible_names = []
+    media_id = None
     if isinstance(media, types.MessageMediaWebPage):
         if isinstance(media.webpage, types.WebPage):
             media = media.webpage.document or media.webpage.photo
@@ -34,6 +38,7 @@ def get_media_name(media, date):
     if isinstance(media, (types.MessageMediaPhoto, types.Photo)):
         kind = 'photo'
         extension = '.jpg'
+        media_id = media.photo.id
     elif isinstance(media, types.MessageMediaContact):
         kind = 'contact'
         extension = '.vcard'
@@ -51,17 +56,24 @@ def get_media_name(media, date):
             logger.error(f"Unknow media type: {type(media)}")
         return
 
+    name_tokens = []
     if possible_names:
         document_name = possible_names[0]
         file_name, extension = os.path.splitext(document_name)
-
-        return f"{file_name}-{date.year:02}-{date.month:02}" \
-               f"_{date.day:02}-{date.hour:02}-{date.minute:02}{date.second}" \
-               f"{extension}"
+        name_tokens.append(f"{file_name}-")
     else:
-        return f'{kind}_{date.year}-{date.month:02}-{date.day:02}' \
-               f'_{date.hour:02}-{date.minute:02}-{date.second:02}' \
-               f'{extension}'
+        name_tokens.append(f'{kind}_')
+    name_tokens.append(
+        f'{date.year:02}-{date.month:02}-{date.day:02}'
+        f'_{date.hour:02}-{date.minute:02}-{date.second:02}'
+    )
+    if group:
+        if media_id:
+            name_tokens.append(f"_{media_id}")
+        else:
+            logger.warning(f"Got a group {group} but unknown media_id")
+    name_tokens.append(extension)
+    return "".join(name_tokens)
 
 
 def copy_in_folder(src, dst):
@@ -122,7 +134,7 @@ class DialogSaver:
             if not full_path:
                 logger.warning(f"The media is known but without filename {media}")
         else:
-            file_name = get_media_name(media, message.date)
+            file_name = get_media_name(message)
             if not file_name:
                 logger.debug(f"We don't save the {media}")
                 return {}
