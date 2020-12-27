@@ -1,4 +1,5 @@
 import logging
+from asyncio import sleep
 from datetime import datetime
 
 from aiocache import cached
@@ -79,8 +80,12 @@ async def wait_for_updates(saver):
                                              commit=False)
             saver.commit()
 
-    logger.info("Catching up")
-    await client.catch_up()
+    while True:
+        try:
+            logger.info("Catching up")
+            await client.catch_up()
 
-    logger.info("Waiting for updates...")
-    await client.run_until_disconnected()
+            logger.info("Waiting for updates...")
+            await client.run_until_disconnected()
+        except ConnectionError:
+            await sleep(10)
