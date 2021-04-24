@@ -10,7 +10,7 @@ import time
 from telethon import TelegramClient, utils
 from telethon.client import DownloadMethods
 from telethon.tl import types
-from telethon.tl.types import MessageMediaWebPage, MessageMediaGeo
+from telethon.tl.types import MessageMediaWebPage, MessageMediaGeo, PeerUser
 
 from sqlitestorage import Store
 from util import slugify, file_hash
@@ -211,11 +211,14 @@ class DialogSaver:
                               ):
         # print(message.id, message.text)
         message_id = message.id
+        sender = message.from_id if not message.sender.is_self else None  # sender only if it's not me
+        if isinstance(sender, PeerUser):
+            sender = sender.user_id
 
         msg = dict(
             id=message_id,
             text=message.text,
-            sender=message.from_id if not message.sender.is_self else None,  # sender only if it's not me
+            sender=sender,
             datetime=message.date,
             silent=message.silent,
             from_scheduled=message.from_scheduled,
