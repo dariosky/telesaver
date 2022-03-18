@@ -209,6 +209,8 @@ class Store:
                 tokens.append("[scheduled]")
             if msg.get('edit_date'):
                 tokens.append("[edited]")
+            if msg.get('deleted'):
+                tokens.append("[deleted]")
 
             msg = " ".join(tokens)
 

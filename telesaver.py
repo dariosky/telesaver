@@ -14,6 +14,7 @@ from telethon.tl.types import MessageMediaWebPage, MessageMediaGeo, PeerUser
 
 from sqlitestorage import Store
 from util import slugify, file_hash
+from utils.formatting import comprint
 from watcher import wait_for_updates, filter_event
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,8 @@ def get_media_name(message):
     if isinstance(media, (types.MessageMediaPhoto, types.Photo)):
         kind = 'photo'
         extension = '.jpg'
+        if media.photo is None:
+            return
         media_id = media.photo.id
     elif isinstance(media, types.MessageMediaContact):
         kind = 'contact'
@@ -48,6 +51,7 @@ def get_media_name(message):
         kind, possible_names = DownloadMethods._get_kind_and_names(media.attributes)
         extension = utils.get_extension(media)
     elif isinstance(media, (types.MessageMediaGeoLive, types.Document)):
+        logger.warning(f"Skipping media type: {type(media)}")
         return
     else:
         if media is None:
@@ -132,7 +136,7 @@ class DialogSaver:
             # the message is know - use its media
             full_path = known_messages[message.id].get('media')
             if not full_path:
-                logger.warning(f"The media is known but without filename {media}")
+                logger.warning(f"The message is known but without a file {media}")
         else:
             file_name = get_media_name(message)
             if not file_name:
@@ -195,7 +199,7 @@ class DialogSaver:
         if not dialog_id:
             logger.warning(f"Unknown message, unknown dialog - skipping")
             return
-        logger.info(f"Changed message: {known_message} - {attributes}")
+        logger.info(f"Changed message: {comprint(known_message)} - {comprint(attributes)}")
         msg = {**known_message,
                **attributes}
 
@@ -267,7 +271,7 @@ class DialogSaver:
         """ Fixme: this isn't nice - it set self.changes and modify the msg when edited """
         known_message = self.known(dialog_id).get(message_id)
         if not known_message:
-            logger.info(f"New message: {msg}")
+            logger.info(f"New message: {comprint(msg)}")
             self.changed = True
             return
         else:
