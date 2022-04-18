@@ -12,5 +12,6 @@ def comprint(o)->str:
         return "{"+", ".join(
             [f"{k}:{comprint(v)}" for k, v in o.items()]
         )+"}"
-
+    if isinstance(o, str):
+        return o
     return json.dumps(o)
