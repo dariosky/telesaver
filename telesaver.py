@@ -292,7 +292,7 @@ class DialogSaver:
             changes = {k: v
                        for k, v in msg.items()
                        if msg[k] != known_message.get(k)}
-            logger.info(f"Changed message: {changes}")
+            logger.info(f"Changed message: {comprint(changes)}")
             self.changed = True
 
     def commit(self):
