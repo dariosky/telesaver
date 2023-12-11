@@ -6,11 +6,17 @@ import os
 import shutil
 import tempfile
 import time
-
+import emoji
+import pytz
 from telethon import TelegramClient, utils
 from telethon.client import DownloadMethods
 from telethon.tl import types
-from telethon.tl.types import MessageMediaWebPage, MessageMediaGeo, PeerUser
+from telethon.tl.types import (
+    MessageMediaWebPage,
+    MessageMediaGeo,
+    PeerUser,
+    MessageMediaContact,
+)
 
 from sqlitestorage import Store
 from util import slugify, file_hash
@@ -19,8 +25,8 @@ from watcher import wait_for_updates, filter_event
 
 logger = logging.getLogger(__name__)
 title = "TeleSave"
-api_id = os.environ.get('TELEGRAM_API_ID')
-api_hash = os.environ.get('TELEGRAM_API_HASH')
+api_id = os.environ.get("TELEGRAM_API_ID")
+api_hash = os.environ.get("TELEGRAM_API_HASH")
 
 DONT_SAVE_MEDIA_TYPES = (MessageMediaWebPage, MessageMediaGeo)
 
@@ -37,17 +43,24 @@ def get_media_name(message):
     if isinstance(media, types.MessageMediaDocument):
         media = media.document
     if isinstance(media, (types.MessageMediaPhoto, types.Photo)):
-        kind = 'photo'
-        extension = '.jpg'
-        if media.photo is None:
+        if media.photo is None or message.file is None:
             return
+        kind = "photo"
+        extension = message.file.ext
         media_id = media.photo.id
     elif isinstance(media, types.MessageMediaContact):
-        kind = 'contact'
-        extension = '.vcard'
+        kind = "contact"
+        extension = ".vcard"
         possible_names = [f"{media.first_name}{extension}"]
-    elif isinstance(media, (types.MessageMediaDocument, types.Document,
-                            types.WebDocument, types.WebDocumentNoProxy)):
+    elif isinstance(
+        media,
+        (
+            types.MessageMediaDocument,
+            types.Document,
+            types.WebDocument,
+            types.WebDocumentNoProxy,
+        ),
+    ):
         kind, possible_names = DownloadMethods._get_kind_and_names(media.attributes)
         extension = utils.get_extension(media)
     elif isinstance(media, (types.MessageMediaGeoLive, types.Document)):
@@ -57,7 +70,7 @@ def get_media_name(message):
         if media is None:
             logger.debug("Expired message is gone")
         else:
-            logger.error(f"Unknow media type: {type(media)}")
+            logger.error(f"Unknown media type: {type(media)}")
         return
 
     name_tokens = []
@@ -66,10 +79,10 @@ def get_media_name(message):
         file_name, extension = os.path.splitext(document_name)
         name_tokens.append(f"{file_name}-")
     else:
-        name_tokens.append(f'{kind}_')
+        name_tokens.append(f"{kind}_")
     name_tokens.append(
-        f'{date.year:02}-{date.month:02}-{date.day:02}'
-        f'_{date.hour:02}-{date.minute:02}-{date.second:02}'
+        f"{date.year:02}-{date.month:02}-{date.day:02}"
+        f"_{date.hour:02}-{date.minute:02}-{date.second:02}"
     )
     if group:
         if media_id:
@@ -103,24 +116,27 @@ class DialogSaver:
     def save_dialog(self, dialog_id, dialog_name):
         logger.debug(f"Saving dialog {dialog_id} as {dialog_name}")
         known_dialogs = self.store.dialog_names
-        if (dialog_id not in known_dialogs
-                or known_dialogs[dialog_id]['name'] != dialog_name):
+        if (
+            dialog_id not in known_dialogs
+            or known_dialogs[dialog_id]["name"] != dialog_name
+        ):
             self.store.add_dialog(
-                dialog_id, dialog_name,
-                folder=self.get_folder_name(dialog_id, dialog_name)
+                dialog_id,
+                dialog_name,
+                folder=self.get_folder_name(dialog_id, dialog_name),
             )
 
     def get_folder_name(self, dialog_id, dialog_name=None):
         known_dialogs = self.store.dialog_names
         if dialog_id in known_dialogs:
-            return known_dialogs[dialog_id]['folder']
+            return known_dialogs[dialog_id]["folder"]
         assert dialog_name is not None, "Unkown dialog, give me its name first"
         logger.info(f"Adding new dialog info: {dialog_name}")
         folder_name = slugify(dialog_name)
         return folder_name
 
     def known(self, dialog_id):
-        """ Get back all the known messages for the given dialog_id """
+        """Get back all the known messages for the given dialog_id"""
         if dialog_id == self._known_dialog_id:
             return self._known
         self._known = self.store.known_messages(dialog_id)
@@ -134,7 +150,7 @@ class DialogSaver:
         known_messages = self.known(dialog_id)
         if message.id in known_messages:
             # the message is know - use its media
-            full_path = known_messages[message.id].get('media')
+            full_path = known_messages[message.id].get("media")
             if not full_path:
                 logger.warning(f"The message is known but without a file {media}")
         else:
@@ -147,7 +163,7 @@ class DialogSaver:
             full_path = os.path.join(folder_name, file_name)
 
         if full_path:
-            if not os.path.isfile('store/' + full_path):
+            if not os.path.isfile("store/" + full_path):
                 new_file = True
                 with tempfile.NamedTemporaryFile() as fp:
                     path = await message.download_media(fp.name)
@@ -155,53 +171,63 @@ class DialogSaver:
                         logger.error(f"Error: Missing path after save? {message}")
                         return {}
                     fp.seek(0)
-                    metadata['hash'] = file_hash(path)
-                    metadata['size'] = os.path.getsize(path)
-                    known_hash = self.store.known_media_hash(metadata['hash'])
+                    metadata["hash"] = file_hash(path)
+                    metadata["size"] = os.path.getsize(path)
+                    known_hash = self.store.known_media_hash(metadata["hash"])
                     if known_hash:
                         first_known = known_hash[0]
-                        logger.debug(f"This file is new but known as {first_known} - I'll reuse it")
+                        logger.debug(
+                            f"This file is new but known as {first_known} - I'll reuse it"
+                        )
                         full_path = known_hash[0]
-                        if os.path.isfile('store/' + full_path):
+                        if os.path.isfile("store/" + full_path):
                             new_file = False
                         else:
-                            logger.warning(f"File {full_path} was known but is missing - reinjecting it")
+                            logger.warning(
+                                f"File {full_path} was known but is missing - reinjecting it"
+                            )
                     if new_file:
-                        copy_in_folder(path, 'store/' + full_path)
+                        copy_in_folder(path, "store/" + full_path)
                 if new_file:
-                    logger.info(f'File saved to {full_path}')
+                    logger.info(f"File saved to {full_path}")
                     try:
                         mod_time = time.mktime(message.date.timetuple())
-                        os.utime('store/' + full_path, (mod_time, mod_time))
+                        os.utime("store/" + full_path, (mod_time, mod_time))
                     except Exception as e:
-                        logger.error(f"Cannot change the time of the file {full_path}: {e}")
-                    if media.ttl_seconds:
-                        metadata['self_destructing'] = media.ttl_seconds
-                        if self.save_self_destructing:
-                            logger.info("Saving self-distructing media")
-                            await self.client.send_file('me',
-                                                        'store/' + full_path,
-                                                        caption=message.text)  # send the self_destructing to me
+                        logger.error(
+                            f"Cannot change the time of the file {full_path}: {e}"
+                        )
+                    if not isinstance(media, MessageMediaContact):
+                        if media.ttl_seconds:
+                            metadata["self_destructing"] = media.ttl_seconds
+                            if self.save_self_destructing:
+                                logger.info("Saving self-distructing media")
+                                await self.client.send_file(
+                                    "me", "store/" + full_path, caption=message.text
+                                )  # send the self_destructing to me
             else:
                 pass
                 # logger.debug(f"File {full_path} already saved, skipping")
-        metadata['media'] = full_path
+        metadata["media"] = full_path
         return metadata
 
     def set_message_attributes(self, message_id, attributes, commit=True):
         known_message = self.store.known_message(message_id)
         if not known_message:
-            logger.warning(f"We didn't know the message - setting the attributes {attributes} however")
+            logger.warning(
+                f"We didn't know the message - setting the attributes {attributes} however"
+            )
             known_message = dict(id=message_id)
             dialog_id = None
         else:
-            dialog_id = known_message.pop('dialog')
+            dialog_id = known_message.pop("dialog")
         if not dialog_id:
-            logger.warning(f"Unknown message, unknown dialog - skipping")
+            logger.warning("Unknown message, unknown dialog - skipping")
             return
-        logger.info(f"Changed message: {comprint(known_message)} - {comprint(attributes)}")
-        msg = {**known_message,
-               **attributes}
+        logger.info(
+            f"Changed message: {comprint(known_message)} - {comprint(attributes)}"
+        )
+        msg = {**known_message, **attributes}
 
         if message_id in self.known(dialog_id):
             self.known(dialog_id)[message_id] = msg
@@ -209,13 +235,17 @@ class DialogSaver:
         if commit:
             self.store.save()
 
-    async def process_message(self, message,
-                              dialog_id,
-                              commit=True,  # commit every message?
-                              ):
+    async def process_message(
+        self,
+        message,
+        dialog_id,
+        commit=True,  # commit every message?
+    ):
         # print(message.id, message.text)
         message_id = message.id
-        sender = message.from_id if not message.sender.is_self else None  # sender only if it's not me
+        sender = (
+            message.from_id if not message.sender.is_self else None
+        )  # sender only if it's not me
         if isinstance(sender, PeerUser):
             sender = sender.user_id
 
@@ -227,6 +257,11 @@ class DialogSaver:
             silent=message.silent,
             from_scheduled=message.from_scheduled,
             edit_date=message.edit_date,
+            reactions=[
+                emoji.demojize(r.reaction.emoticon) for r in message.reactions.results
+            ]
+            if message.reactions
+            else None,
         )
 
         msg = {k: v for k, v in msg.items() if v}  # get rid of Falsey
@@ -248,17 +283,23 @@ class DialogSaver:
             if not await filter_event(dialog):
                 continue
             logger.debug(f"{dialog.name} has ID {dialog.id}")
-            self.save_dialog(dialog.id, dialog.name)  # we know the dialog - let's save it
+            self.save_dialog(
+                dialog.id, dialog.name
+            )  # we know the dialog - let's save it
 
             async for message in self.client.iter_messages(dialog):
                 is_known_message = await self.process_message(
-                    message, dialog_id=dialog.id, commit=False,
+                    message,
+                    dialog_id=dialog.id,
+                    commit=False,
                 )
 
                 # exit conditions
                 if isinstance(recent_only, datetime.datetime):
                     if message.date < recent_only:
-                        logger.debug("We reached a older message - skipping the remaining")
+                        logger.debug(
+                            "We reached a older message - skipping the remaining"
+                        )
                         break
                 elif recent_only and is_known_message:
                     logger.debug("We reached a known message - skipping the remaining")
@@ -268,7 +309,7 @@ class DialogSaver:
         self.store.save()
 
     def check_changed(self, message_id, dialog_id, msg):
-        """ Fixme: this isn't nice - it set self.changes and modify the msg when edited """
+        """Fixme: this isn't nice - it set self.changed and modify the msg when edited"""
         known_message = self.known(dialog_id).get(message_id)
         if not known_message:
             logger.info(f"New message: {comprint(msg)}")
@@ -279,19 +320,16 @@ class DialogSaver:
                 # keep all the extra fields to the message
                 if field not in msg:
                     msg[field] = known_message[field]
-            if msg.get('text') != known_message.get('text'):
+            if msg.get("text") != known_message.get("text"):
                 # keep the history of previous edit
-                if 'prev' not in msg:
-                    msg['prev'] = []
-                msg['prev'].append(known_message.get('text'))
+                if "prev" not in msg:
+                    msg["prev"] = []
+                msg["prev"].append(known_message.get("text"))
 
-        if msg != {  # see if the fields that we have have changed
-            k: known_message.get(k)
-            for k in msg
+        if msg != {  # see if the fields that we have changed
+            k: known_message.get(k) for k in msg
         }:
-            changes = {k: v
-                       for k, v in msg.items()
-                       if msg[k] != known_message.get(k)}
+            changes = {k: v for k, v in msg.items() if msg[k] != known_message.get(k)}
             logger.info(f"Changed message: {comprint(changes)}")
             self.changed = True
 
@@ -300,62 +338,72 @@ class DialogSaver:
 
 
 async def main(
-        client: 'TelegramClient',
-        store: 'Store',
-        recent_only=True,
-        save_self_destructing=True,
-        listen=False):
-    saver = DialogSaver(client=client,
-                        store=store,
-                        save_self_destructing=save_self_destructing)
+    client: "TelegramClient",
+    store: "Store",
+    recent_only=True,
+    save_self_destructing=True,
+    listen=False,
+):
+    saver = DialogSaver(
+        client=client, store=store, save_self_destructing=save_self_destructing
+    )
     if listen:
         await wait_for_updates(saver)
     else:
         await saver.run(
-            recent_only=recent_only,
-            # recent_only=pytz.utc.localize(datetime.datetime.utcnow()) - datetime.timedelta(days=2)
+            # recent_only=recent_only,
+            recent_only=recent_only
+            and pytz.utc.localize(datetime.datetime.utcnow())
+            - datetime.timedelta(days=7)
         )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     logging.basicConfig(
         # level=logging.DEBUG
     )
     if not api_hash or not api_id:
-        raise RuntimeError("Please set TELEGRAM_API_ID and TELEGRAM_API_HASH environment variables")
-
+        raise RuntimeError(
+            "Please set TELEGRAM_API_ID and TELEGRAM_API_HASH environment variables"
+        )
 
     def parse():
-        parser = argparse.ArgumentParser(description='Preserve a history of known Telegram messages')
-        parser.add_argument("--all",
-                            help="Go ahead to the beginning of history, don't stop at the last known message",
-                            default=False,
-                            action="store_true")
+        parser = argparse.ArgumentParser(
+            description="Preserve a history of known Telegram messages"
+        )
+        parser.add_argument(
+            "--all",
+            help="Go ahead to the beginning of history, don't stop at the last known message",
+            default=False,
+            action="store_true",
+        )
 
-        parser.add_argument("--dontsaveselfdestructing",
-                            help="Avoid forwarding new self-destructing messages to yourself",
-                            default=False,
-                            dest='dont_save_self_destructing',
-                            action="store_true")
+        parser.add_argument(
+            "--dontsaveselfdestructing",
+            help="Avoid forwarding new self-destructing messages to yourself",
+            default=False,
+            dest="dont_save_self_destructing",
+            action="store_true",
+        )
 
-        parser.add_argument("--debug",
-                            help="Verbose logging active",
-                            default=False,
-                            action="store_true")
+        parser.add_argument(
+            "--debug", help="Verbose logging active", default=False, action="store_true"
+        )
 
-        parser.add_argument("--log",
-                            help="Log the latest messages",
-                            default=False,
-                            action="store_true")
+        parser.add_argument(
+            "--log", help="Log the latest messages", default=False, action="store_true"
+        )
 
-        parser.add_argument("--config",
-                            help="Choose another config file",
-                            default='secret/.session',
-                            action="store")
+        parser.add_argument(
+            "--config",
+            help="Choose another config file",
+            default="secret/.session",
+            action="store",
+        )
 
-        parser.add_argument("--listen",
-                            help="Start listening for updates",
-                            action="store_true")
+        parser.add_argument(
+            "--listen", help="Start listening for updates", action="store_true"
+        )
 
         args = parser.parse_args()
 
@@ -364,18 +412,23 @@ if __name__ == '__main__':
         if args.log:
             store.log()
         else:
-            with TelegramClient(args.config, int(api_id), api_hash) as client:
+            with TelegramClient(
+                args.config,
+                int(api_id),
+                api_hash,
+                connection_retries=-1,
+                request_retries=-1,
+            ) as client:
                 client.loop.run_until_complete(
                     main(
                         client=client,
                         store=store,
                         recent_only=not args.all,
                         save_self_destructing=not args.dont_save_self_destructing,
-                        listen=args.listen
+                        listen=args.listen,
                     )
                 )
         store.close()
-
 
     parse()
     logger.debug("Fin.")

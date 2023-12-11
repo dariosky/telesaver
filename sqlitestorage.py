@@ -10,27 +10,25 @@ from cached_property import cached_property
 
 from util import dict_factory, parse_time, file_hash
 
-DB_FIELDS = ['id', 'datetime', 'text', 'sender', 'media']
+DB_FIELDS = ["id", "datetime", "text", "sender", "media"]
 logger = logging.getLogger(__name__)
-DATETIME_FIELDS = ('datetime', 'edit_date', 'read_time')
-TIME_FORMAT = '%Y-%m-%d %H:%M:%S%z'
+DATETIME_FIELDS = ("datetime", "edit_date", "read_time")
+TIME_FORMAT = "%Y-%m-%d %H:%M:%S%z"
 
 
 class Store:
-    def __init__(self, filename='store.sqlite'):
-        """ create a database connection to a SQLite database """
-        self.conn = sqlite3.connect(filename or ':memory:')
+    def __init__(self, filename="store.sqlite"):
+        """create a database connection to a SQLite database"""
+        self.conn = sqlite3.connect(filename or ":memory:")
         self.cur = self.conn.cursor()
         self.create_tables()
         self.changed = False
 
     def create_tables(self):
-        self.cur.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
+        self.cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = [r[0] for r in self.cur.fetchall()]
 
-        if 'dialogs' not in tables:
+        if "dialogs" not in tables:
             logger.info("Creating table dialogs")
             create_dialogs = """
                 create table dialogs
@@ -43,7 +41,7 @@ class Store:
                     );
                 """
             self.cur.execute(create_dialogs)
-        if 'messages' not in tables:
+        if "messages" not in tables:
             logger.info("Creating table messages")
             create_messages = """
                 create table messages
@@ -66,7 +64,7 @@ class Store:
     def add_msg(self, dialog_id, msg):
         msg = msg.copy()  # we change the datetime
 
-        if 'datetime' not in msg:
+        if "datetime" not in msg:
             logger.warning("Missing datetime on message - skipping", msg)
             return
 
@@ -80,15 +78,9 @@ class Store:
                     msg[field] = pytz.utc.localize(msg[field])
                 msg[field] = msg[field].strftime(TIME_FORMAT)
 
-        extra = {k: v
-                 for k, v in msg.items()
-                 if k not in DB_FIELDS}
+        extra = {k: v for k, v in msg.items() if k not in DB_FIELDS}
 
-        params = (
-                [dialog_id] +
-                [msg.get(k)
-                 for k in DB_FIELDS] +
-                [json.dumps(extra)])
+        params = [dialog_id] + [msg.get(k) for k in DB_FIELDS] + [json.dumps(extra)]
 
         query = f"""
             INSERT OR REPLACE INTO messages
@@ -98,8 +90,7 @@ class Store:
         """
         # print(query)
         # print(params)
-        self.cur.execute(query,
-                         params)
+        self.cur.execute(query, params)
         self.changed = True
 
     def add_dialog(self, dialog_id, name, folder):
@@ -111,8 +102,10 @@ class Store:
                         ({",".join(["?"] * len(params))});
                 """
         self.cur.execute(query, params)
-        self.dialog_names[dialog_id] = dict(name=name,  # we know the new dialog
-                                            folder=folder)
+        self.dialog_names[dialog_id] = dict(
+            name=name,  # we know the new dialog
+            folder=folder,
+        )
         self.changed = True
 
     def save(self):
@@ -132,12 +125,10 @@ class Store:
             from dialogs
         """
         self.cur.execute(query)
-        return {r[0]: dict(name=r[1],
-                           folder=r[2])
-                for r in self.cur.fetchall()}
+        return {r[0]: dict(name=r[1], folder=r[2]) for r in self.cur.fetchall()}
 
     def get_messages_from_cursor(self):
-        """ Return the record out of the cursor """
+        """Return the record out of the cursor"""
 
         def get_msg(r):
             msg = dict(
@@ -149,7 +140,7 @@ class Store:
                 **json.loads(r[5]),
             )
             if len(r) > 6:
-                msg['dialog'] = r[6]
+                msg["dialog"] = r[6]
             for field in DATETIME_FIELDS:
                 if field not in msg:
                     continue
@@ -158,10 +149,7 @@ class Store:
                     msg[field] = parse_time(tz_field)
             return {k: v for k, v in msg.items() if v}  # get rid of Falsey
 
-        return {
-            r[0]: get_msg(r)
-            for r in self.cur.fetchall()
-        }
+        return {r[0]: get_msg(r) for r in self.cur.fetchall()}
 
     def known_messages(self, dialog_id):
         query = """
@@ -183,7 +171,7 @@ class Store:
         return records[message_id] if records else None
 
     def log(self, number=10):
-        """ Display the last messages """
+        """Display the last messages"""
         query = """
                     SELECT datetime, text, sender, media, extra, d.name as dialog_name
                     from messages m
@@ -195,21 +183,21 @@ class Store:
 
         def get_msg(r):
             msg = dict_factory(self.cur, r)
-            extra = json.loads(msg['extra'])  # add the content of extra
+            extra = json.loads(msg["extra"])  # add the content of extra
             msg.update(extra)
 
             tokens = [
                 f"{msg['datetime']}",
                 f"- {'me' if msg['sender'] is None else msg['dialog_name']} -",
-                f"{msg['text'] or msg['media']}"
+                f"{msg['text'] or msg['media']}",
             ]
-            if msg.get('silent'):
+            if msg.get("silent"):
                 tokens.append("[silent]")
-            if msg.get('scheduled'):
+            if msg.get("scheduled"):
                 tokens.append("[scheduled]")
-            if msg.get('edit_date'):
+            if msg.get("edit_date"):
                 tokens.append("[edited]")
-            if msg.get('deleted'):
+            if msg.get("deleted"):
                 tokens.append("[deleted]")
 
             msg = " ".join(tokens)
@@ -226,24 +214,27 @@ class Store:
             messages = self.known_messages(dialog_id).items()
 
             if not messages:
-                dialog_path = os.path.join('store', dialog['folder'], )
+                dialog_path = os.path.join(
+                    "store",
+                    dialog["folder"],
+                )
                 if os.path.isdir(dialog_path):
                     logger.info(f"Removing dialog {dialog_path}")
                     if commit:
                         shutil.rmtree(dialog_path)
 
             for msgid, message in messages:
-                path = message.get('media')
+                path = message.get("media")
                 changed = False
                 if path:
                     if not os.path.isfile("store/" + path):
                         # path is not absolute - let's change it
-                        new_path = path.replace('store/', '').replace("/media/", "/")
+                        new_path = path.replace("store/", "").replace("/media/", "/")
 
                         if os.path.isfile("store/" + new_path):
                             # set the absolute path
                             path = new_path
-                            message['media'] = new_path
+                            message["media"] = new_path
                             changed = True
 
                     if not os.path.isfile("store/" + path):
@@ -251,29 +242,31 @@ class Store:
                         continue
 
                     # here the path is valid
-                    if 'hash' not in message:
+                    if "hash" not in message:
                         changed = True
-                        message['hash'] = file_hash("store/" + path)
+                        message["hash"] = file_hash("store/" + path)
 
-                    if 'size' not in message:
-                        message['size'] = os.path.getsize("store/" + path)
+                    if "size" not in message:
+                        message["size"] = os.path.getsize("store/" + path)
                         changed = True
 
-                    mediaid = message['hash']
+                    mediaid = message["hash"]
 
                     if mediaid in media_hash_to_path:
                         known_hash_path = media_hash_to_path[mediaid]
                         if path != known_hash_path:
-                            logger.info(f"I know this media as {known_hash_path}- let's change this message")
-                            if os.path.isfile('store/' + known_hash_path):
+                            logger.info(
+                                f"I know this media as {known_hash_path}- let's change this message"
+                            )
+                            if os.path.isfile("store/" + known_hash_path):
                                 # and delete the file
-                                message['media'] = known_hash_path
+                                message["media"] = known_hash_path
                                 changed = True
-                                if os.path.isfile('store/' + path):
-                                    os.makedirs('duplicates', exist_ok=True)
-                                    shutil.copy('store/' + path, 'duplicates')
+                                if os.path.isfile("store/" + path):
+                                    os.makedirs("duplicates", exist_ok=True)
+                                    shutil.copy("store/" + path, "duplicates")
                                     if commit:
-                                        os.remove('store/' + path)
+                                        os.remove("store/" + path)
                     else:
                         media_hash_to_path[mediaid] = path
 
@@ -284,11 +277,9 @@ class Store:
 
     def scan_unreferenced_media(self, media_hash_to_path, commit=False):
         existing_media_files = set()
-        for root, dirs, files in os.walk('store'):
+        for root, dirs, files in os.walk("store"):
             for filename in files:
-                existing_media_files.add(
-                    os.path.join(root, filename)
-                )
+                existing_media_files.add(os.path.join(root, filename))
         referenced_media = set(media_hash_to_path.values())
         stale_files = existing_media_files - referenced_media
         if stale_files:
@@ -311,8 +302,8 @@ class Store:
 
 
 def json_to_sqlite():
-    for folder in os.listdir('store'):
-        file_path = os.path.join("store", folder, 'store.json')
+    for folder in os.listdir("store"):
+        file_path = os.path.join("store", folder, "store.json")
         try:
             dialog_id = int(folder)
         except ValueError:
@@ -327,9 +318,7 @@ def json_to_sqlite():
             with open(file_path) as f:
                 data = json.load(f)
                 for msg_id, msg in data.items():
-                    store.add_msg(dialog_id,
-                                  msg={**msg,
-                                       "id": msg_id})
+                    store.add_msg(dialog_id, msg={**msg, "id": msg_id})
 
 
 def convert_msg_to_utc(from_tz):
@@ -338,7 +327,7 @@ def convert_msg_to_utc(from_tz):
     for dialog_id, desc in store.dialog_names.items():
         known = store.known_messages(dialog_id)
         for msg_id, msg in known.items():
-            for field in ('datetime', 'edit_date'):
+            for field in ("datetime", "edit_date"):
                 if msg.get(field):
                     # convert from CET to UTC
                     tz_field = msg[field]
@@ -350,18 +339,14 @@ def convert_msg_to_utc(from_tz):
                         utc_date = tz_field.replace(tzinfo=tz).astimezone(utc)
                         msg[field] = utc_date
 
-            store.add_msg(
-                dialog_id, msg
-            )
+            store.add_msg(dialog_id, msg)
 
         print(desc)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     store = Store()
-    logging.basicConfig(
-        level=logging.DEBUG
-    )
+    logging.basicConfig(level=logging.DEBUG)
 
     # json_to_sqlite()
     # convert_msg_to_utc()

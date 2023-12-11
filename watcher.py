@@ -12,12 +12,9 @@ logger = logging.getLogger(__name__)
 
 @cached(ttl=60 * 15)  # cache them for 15'
 async def get_dialogs(client):
-    """ Get the archived dialogs """
+    """Get the archived dialogs"""
     logger.debug("Getting archived Dialogs")
-    return {
-        dialog.id: dialog
-        for dialog in await client.get_dialogs()
-    }
+    return {dialog.id: dialog for dialog in await client.get_dialogs()}
 
 
 async def filter_event(event):
@@ -57,8 +54,7 @@ async def wait_for_updates(saver):
         await event.get_sender()
         if await filter_event(event):
             saver.save_dialog(event.chat.id, get_display_name(event.chat))  # the dialog
-            await saver.process_message(message=event.message,
-                                        dialog_id=event.chat_id)
+            await saver.process_message(message=event.message, dialog_id=event.chat_id)
 
     @client.on(events.MessageRead())
     async def message_read_handler(event):
@@ -66,22 +62,23 @@ async def wait_for_updates(saver):
             read_time = datetime.utcnow()
             message_ids = event._message_ids or [event._message_id]
             for message_id in message_ids:
-                saver.set_message_attributes(message_id,
-                                             {"read_time": read_time},
-                                             commit=False)
+                saver.set_message_attributes(
+                    message_id, {"read_time": read_time}, commit=False
+                )
             saver.commit()
 
     @client.on(events.MessageDeleted())
     async def message_delete_handler(event):
         if await filter_event(event):
             for message_id in event.deleted_ids:
-                saver.set_message_attributes(message_id,
-                                             {"deleted": True},
-                                             commit=False)
+                saver.set_message_attributes(
+                    message_id, {"deleted": True}, commit=False
+                )
             saver.commit()
 
     while True:
         try:
+            await client.connect()
             logger.info("Catching up")
             await client.catch_up()
 

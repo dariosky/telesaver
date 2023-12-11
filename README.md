@@ -19,8 +19,7 @@ There are a few options:
 * `--dontsaveselfdestructing` Avoid forwarding new self-destructing messages to yourself
 
 By default it saves everything on the filesystem - a `store` subfolder with
-all the ids of the chats - and inside a json file with message history
-and a `media` subfolder with all the attachment.
+all the media attachments of the chats - a Sqlite DB with the messages.
 
 As you may guess with the 2nd option - when he finds a new self-destructing-message
 it will forward it to you unless you ask otherwise. 

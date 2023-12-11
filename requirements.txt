@@ -4,3 +4,4 @@ cached_property
 pytz
 aiocache
 msgpack
+emoji

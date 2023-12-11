@@ -1,3 +1,5 @@
 /store
+/secret
 .session
 store.sqlite
+/.idea
