@@ -63,7 +63,7 @@ def get_media_name(message):
     ):
         kind, possible_names = DownloadMethods._get_kind_and_names(media.attributes)
         extension = utils.get_extension(media)
-    elif isinstance(media, (types.MessageMediaGeoLive, types.Document)):
+    elif isinstance(media, types.MessageMediaGeoLive):
         logger.warning(f"Skipping media type: {type(media)}")
         return
     else:
@@ -130,7 +130,7 @@ class DialogSaver:
         known_dialogs = self.store.dialog_names
         if dialog_id in known_dialogs:
             return known_dialogs[dialog_id]["folder"]
-        assert dialog_name is not None, "Unkown dialog, give me its name first"
+        assert dialog_name is not None, "Unknown dialog, give me its name first"
         logger.info(f"Adding new dialog info: {dialog_name}")
         folder_name = slugify(dialog_name)
         return folder_name
@@ -163,7 +163,8 @@ class DialogSaver:
             full_path = os.path.join(folder_name, file_name)
 
         if full_path:
-            if not os.path.isfile("store/" + full_path):
+            store_path = os.path.join("store", full_path)
+            if not os.path.isfile(store_path):
                 new_file = True
                 with tempfile.NamedTemporaryFile() as fp:
                     path = await message.download_media(fp.name)
@@ -180,19 +181,20 @@ class DialogSaver:
                             f"This file is new but known as {first_known} - I'll reuse it"
                         )
                         full_path = known_hash[0]
-                        if os.path.isfile("store/" + full_path):
+                        store_path = os.path.join("store", full_path)
+                        if os.path.isfile(store_path):
                             new_file = False
                         else:
                             logger.warning(
                                 f"File {full_path} was known but is missing - reinjecting it"
                             )
                     if new_file:
-                        copy_in_folder(path, "store/" + full_path)
+                        copy_in_folder(path, store_path)
                 if new_file:
                     logger.info(f"File saved to {full_path}")
                     try:
                         mod_time = time.mktime(message.date.timetuple())
-                        os.utime("store/" + full_path, (mod_time, mod_time))
+                        os.utime(store_path, (mod_time, mod_time))
                     except Exception as e:
                         logger.error(
                             f"Cannot change the time of the file {full_path}: {e}"
@@ -201,9 +203,9 @@ class DialogSaver:
                         if media.ttl_seconds:
                             metadata["self_destructing"] = media.ttl_seconds
                             if self.save_self_destructing:
-                                logger.info("Saving self-distructing media")
+                                logger.info("Saving self-destructing media")
                                 await self.client.send_file(
-                                    "me", "store/" + full_path, caption=message.text
+                                    "me", store_path, caption=message.text
                                 )  # send the self_destructing to me
             else:
                 pass
@@ -348,6 +350,7 @@ async def main(
         client=client, store=store, save_self_destructing=save_self_destructing
     )
     if listen:
+        print("Listening for Telegram updates...")
         await wait_for_updates(saver)
     else:
         await saver.run(
@@ -362,6 +365,7 @@ if __name__ == "__main__":
     logging.basicConfig(
         # level=logging.DEBUG
     )
+    logging.getLogger("telethon.network").setLevel(logging.ERROR)
     if not api_hash or not api_id:
         raise RuntimeError(
             "Please set TELEGRAM_API_ID and TELEGRAM_API_HASH environment variables"
@@ -412,6 +416,9 @@ if __name__ == "__main__":
         if args.log:
             store.log()
         else:
+            config_parent = os.path.dirname(args.config)
+            if config_parent:
+                os.makedirs(config_parent, exist_ok=True)  # create parent
             with TelegramClient(
                 args.config,
                 int(api_id),

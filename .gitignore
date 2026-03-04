@@ -3,3 +3,4 @@
 .session
 store.sqlite
 /.idea
+/.python-version
