@@ -8,7 +8,7 @@ import sqlite3
 import pytz
 from cached_property import cached_property
 
-from util import dict_factory, parse_time, file_hash
+from util import dict_factory, file_hash, parse_time
 
 DB_FIELDS = ["id", "datetime", "text", "sender", "media"]
 logger = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ class Store:
         self.conn = sqlite3.connect(filename or ":memory:")
         self.cur = self.conn.cursor()
         self.create_tables()
+        self.update_db()
         self.changed = False
 
     def create_tables(self):
@@ -61,6 +62,19 @@ class Store:
             """
             self.cur.execute(create_messages)
 
+    def update_db(self):
+        """Migrate known schema changes in-place."""
+        self.cur.execute("PRAGMA table_info(dialogs)")
+        columns = {r[1] for r in self.cur.fetchall()}
+        if "telegram_online_status" not in columns:
+            logger.info("Migrating dialogs table: adding telegram_online_status")
+            self.cur.execute(
+                "ALTER TABLE dialogs ADD COLUMN telegram_online_status TEXT"
+            )
+        if "last_online" not in columns:
+            logger.info("Migrating dialogs table: adding last_online")
+            self.cur.execute("ALTER TABLE dialogs ADD COLUMN last_online datetime")
+
     def add_msg(self, dialog_id, msg):
         msg = msg.copy()  # we change the datetime
 
@@ -96,17 +110,74 @@ class Store:
     def add_dialog(self, dialog_id, name, folder):
         params = (dialog_id, name, folder)
         query = f"""
-                    INSERT OR REPLACE INTO dialogs
+                    INSERT INTO dialogs
                         (id, name, folder)
                     VALUES
-                        ({",".join(["?"] * len(params))});
+                        ({",".join(["?"] * len(params))})
+                    ON CONFLICT(id) DO UPDATE SET
+                        name=excluded.name,
+                        folder=excluded.folder;
                 """
         self.cur.execute(query, params)
-        self.dialog_names[dialog_id] = dict(
-            name=name,  # we know the new dialog
-            folder=folder,
-        )
+        known = self.dialog_names.get(dialog_id, {})
+        self.dialog_names[dialog_id] = {
+            **known,
+            "name": name,  # we know the new dialog
+            "folder": folder,
+        }
         self.changed = True
+
+    def normalize_datetime(self, value):
+        if not value:
+            return None
+        if isinstance(value, str):
+            value = parse_time(value)
+        elif isinstance(value, float):
+            value = datetime.datetime.fromtimestamp(value, tz=datetime.timezone.utc)
+
+        if isinstance(value, datetime.datetime):
+            if value.tzinfo is None:
+                value = pytz.utc.localize(value)
+            else:
+                value = value.astimezone(datetime.timezone.utc)
+            return value.strftime(TIME_FORMAT)
+        return value
+
+    def set_dialog_status(
+        self, dialog_id, telegram_online_status=None, last_online=None
+    ):
+        last_online = self.normalize_datetime(last_online)
+        query = """
+            UPDATE dialogs
+            SET telegram_online_status=?, last_online=?
+            WHERE id=?
+        """
+        self.cur.execute(query, (telegram_online_status, last_online, dialog_id))
+        known = self.dialog_names.get(dialog_id)
+        if known is not None:
+            known["telegram_online_status"] = telegram_online_status
+            known["last_online"] = parse_time(last_online) if last_online else None
+        self.changed = True
+
+    def top_dialogs_by_last_online(self, limit=20):
+        query = """
+            SELECT id, name, telegram_online_status, last_online
+            FROM dialogs
+            ORDER BY last_online DESC
+            LIMIT ?
+        """
+        self.cur.execute(query, (limit,))
+        rows = []
+        for row in self.cur.fetchall():
+            rows.append(
+                dict(
+                    id=row[0],
+                    name=row[1],
+                    telegram_online_status=row[2],
+                    last_online=parse_time(row[3]) if row[3] else None,
+                )
+            )
+        return rows
 
     def save(self):
         if self.changed:
@@ -121,11 +192,19 @@ class Store:
     @cached_property
     def dialog_names(self):
         query = """
-            SELECT id, name, folder
+            SELECT id, name, folder, telegram_online_status, last_online
             from dialogs
         """
         self.cur.execute(query)
-        return {r[0]: dict(name=r[1], folder=r[2]) for r in self.cur.fetchall()}
+        known = {}
+        for row in self.cur.fetchall():
+            known[row[0]] = dict(
+                name=row[1],
+                folder=row[2],
+                telegram_online_status=row[3],
+                last_online=parse_time(row[4]) if row[4] else None,
+            )
+        return known
 
     def get_messages_from_cursor(self):
         """Return the record out of the cursor"""

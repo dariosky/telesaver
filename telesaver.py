@@ -6,22 +6,23 @@ import os
 import shutil
 import tempfile
 import time
+
 import emoji
 import pytz
 from telethon import TelegramClient, utils
 from telethon.client import DownloadMethods
 from telethon.tl import types
 from telethon.tl.types import (
-    MessageMediaWebPage,
-    MessageMediaGeo,
-    PeerUser,
     MessageMediaContact,
+    MessageMediaGeo,
+    MessageMediaWebPage,
+    PeerUser,
 )
 
 from sqlitestorage import Store
-from util import slugify, file_hash
+from util import file_hash, slugify
 from utils.formatting import comprint
-from watcher import wait_for_updates, filter_event
+from watcher import filter_event, wait_for_updates
 
 logger = logging.getLogger(__name__)
 title = "TeleSave"
@@ -29,6 +30,169 @@ api_id = os.environ.get("TELEGRAM_API_ID")
 api_hash = os.environ.get("TELEGRAM_API_HASH")
 
 DONT_SAVE_MEDIA_TYPES = (MessageMediaWebPage, MessageMediaGeo)
+WITHIN_A_WEEK = "within a week"
+WITHIN_A_MONTH = "within a month"
+LONG_TIME_AGO = "long time ago"
+
+
+def utcnow():
+    return pytz.utc.localize(datetime.datetime.utcnow())
+
+
+def ensure_utc(value):
+    if not value:
+        return None
+    if isinstance(value, datetime.datetime):
+        if value.tzinfo is None:
+            return pytz.utc.localize(value)
+        return value.astimezone(datetime.timezone.utc)
+    return value
+
+
+def normalize_presence_status(status, last_online, now=None):
+    if status not in {"recently", WITHIN_A_WEEK, WITHIN_A_MONTH}:
+        return status
+    last_online = ensure_utc(last_online)
+    if not last_online:
+        return status
+    now = ensure_utc(now) or utcnow()
+    if now - last_online > datetime.timedelta(days=30):
+        return LONG_TIME_AGO
+    return status
+
+
+def status_rank(status):
+    rank = {
+        "recently": 1,
+        WITHIN_A_WEEK: 2,
+        WITHIN_A_MONTH: 3,
+        LONG_TIME_AGO: 4,
+    }
+    return rank.get(status or "", 99)
+
+
+def relative_to_now(value, now=None):
+    value = ensure_utc(value)
+    if not value:
+        return ""
+    now = ensure_utc(now) or utcnow()
+    delta = now - value
+    seconds = max(0, int(delta.total_seconds()))
+
+    if seconds < 60:
+        return "just now"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = hours // 24
+    if days < 7:
+        return f"{days} day{'s' if days != 1 else ''} ago"
+    weeks = days // 7
+    if weeks < 5:
+        return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+    months = days // 30
+    if months < 12:
+        return f"{months} month{'s' if months != 1 else ''} ago"
+    years = days // 365
+    return f"{years} year{'s' if years != 1 else ''} ago"
+
+
+def print_status_table(rows):
+    headers = ["name", "telegram_online_status", "last_update"]
+    now = utcnow()
+
+    normalized = []
+    for row in rows:
+        status = normalize_presence_status(
+            row.get("telegram_online_status"),
+            row.get("last_online"),
+            now=now,
+        )
+        normalized.append(
+            {
+                **row,
+                "telegram_online_status": status,
+                "last_update": relative_to_now(row.get("last_online"), now=now),
+            }
+        )
+
+    def sort_key(row):
+        last_online = ensure_utc(row.get("last_online"))
+        timestamp = last_online.timestamp() if last_online else float("-inf")
+        return (
+            -timestamp,
+            status_rank(row.get("telegram_online_status")),
+            row.get("name") or "",
+        )
+
+    normalized.sort(key=sort_key)
+
+    data = [
+        [
+            str(row.get("name") or ""),
+            str(row.get("telegram_online_status") or ""),
+            row.get("last_update") or "",
+        ]
+        for row in normalized
+    ]
+    widths = [
+        max(len(headers[i]), *(len(line[i]) for line in data))
+        if data
+        else len(headers[i])
+        for i in range(len(headers))
+    ]
+
+    def fmt_line(columns):
+        return " | ".join(f"{columns[i]:<{widths[i]}}" for i in range(len(columns)))
+
+    separator = "-+-".join("-" * w for w in widths)
+    print(fmt_line(headers))
+    print(separator)
+    for line in data:
+        print(fmt_line(line))
+
+
+def infer_online_status(status, previous_status=None, previous_last_online=None):
+    now = utcnow()
+    previous_last_online = ensure_utc(previous_last_online)
+
+    if isinstance(status, types.UserStatusOnline):
+        new_status, new_last_online = "online", now
+    elif isinstance(status, types.UserStatusOffline):
+        new_status, new_last_online = "offline", ensure_utc(status.was_online)
+    elif isinstance(status, types.UserStatusRecently):
+        if previous_status in {WITHIN_A_WEEK, WITHIN_A_MONTH}:
+            new_status, new_last_online = "recently", now
+        else:
+            new_status, new_last_online = "recently", previous_last_online
+    elif isinstance(status, types.UserStatusLastWeek):
+        week_ago = now - datetime.timedelta(days=7)
+        if previous_last_online:
+            new_status, new_last_online = (
+                WITHIN_A_WEEK,
+                min(previous_last_online, week_ago),
+            )
+        else:
+            new_status, new_last_online = WITHIN_A_WEEK, week_ago
+    elif isinstance(status, types.UserStatusLastMonth):
+        month_ago = now - datetime.timedelta(days=30)
+        if previous_last_online:
+            new_status, new_last_online = (
+                WITHIN_A_MONTH,
+                min(previous_last_online, month_ago),
+            )
+        else:
+            new_status, new_last_online = WITHIN_A_MONTH, month_ago
+    elif isinstance(status, types.UserStatusEmpty):
+        new_status, new_last_online = "empty", previous_last_online
+    else:
+        new_status, new_last_online = None, None
+
+    new_status = normalize_presence_status(new_status, new_last_online, now=now)
+    return new_status, new_last_online
 
 
 def get_media_name(message):
@@ -355,10 +519,43 @@ async def main(
     else:
         await saver.run(
             # recent_only=recent_only,
-            recent_only=recent_only
-            and pytz.utc.localize(datetime.datetime.utcnow())
-            - datetime.timedelta(days=7)
+            recent_only=recent_only and utcnow() - datetime.timedelta(days=7)
         )
+
+
+async def main_status(client: "TelegramClient", store: "Store"):
+    saver = DialogSaver(client=client, store=store)
+    async for dialog in client.iter_dialogs():
+        if not await filter_event(dialog):
+            continue
+        saver.save_dialog(dialog.id, dialog.name)
+
+        known_dialog = store.dialog_names.get(dialog.id, {})
+        previous_status = known_dialog.get("telegram_online_status")
+        previous_last_online = known_dialog.get("last_online")
+
+        entity = dialog.entity
+        if not isinstance(entity, types.User):
+            store.set_dialog_status(
+                dialog.id, telegram_online_status=None, last_online=None
+            )
+            continue
+
+        status, last_online = infer_online_status(
+            entity.status,
+            previous_status=previous_status,
+            previous_last_online=previous_last_online,
+        )
+        store.set_dialog_status(
+            dialog.id,
+            telegram_online_status=status,
+            last_online=last_online,
+        )
+    store.save()
+
+    top = store.top_dialogs_by_last_online(limit=20)
+    print("Top 20 dialogs by last_online")
+    print_status_table(top)
 
 
 if __name__ == "__main__":
@@ -408,6 +605,13 @@ if __name__ == "__main__":
         parser.add_argument(
             "--listen", help="Start listening for updates", action="store_true"
         )
+        parser.add_argument(
+            "command",
+            nargs="?",
+            choices=("sync", "status"),
+            default="sync",
+            help="sync messages (default) or update Telegram contact status",
+        )
 
         args = parser.parse_args()
 
@@ -419,6 +623,13 @@ if __name__ == "__main__":
             config_parent = os.path.dirname(args.config)
             if config_parent:
                 os.makedirs(config_parent, exist_ok=True)  # create parent
+            if args.command == "status":
+                if args.all:
+                    logger.warning("Ignoring --all in status mode")
+                if args.dont_save_self_destructing:
+                    logger.warning("Ignoring --dontsaveselfdestructing in status mode")
+                if args.listen:
+                    logger.warning("Ignoring --listen in status mode")
             with TelegramClient(
                 args.config,
                 int(api_id),
@@ -427,7 +638,9 @@ if __name__ == "__main__":
                 request_retries=-1,
             ) as client:
                 client.loop.run_until_complete(
-                    main(
+                    main_status(client=client, store=store)
+                    if args.command == "status"
+                    else main(
                         client=client,
                         store=store,
                         recent_only=not args.all,
