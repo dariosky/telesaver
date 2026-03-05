@@ -3,7 +3,7 @@ import datetime
 import pytz
 from telethon.tl import types
 
-from telesaver import infer_online_status, relative_to_now, status_rank
+from telesaver import infer_online_status, one_month_ago, relative_to_now, status_rank
 
 
 def test_infer_online_sets_last_online_to_now():
@@ -24,32 +24,28 @@ def test_infer_online_sets_last_online_to_now():
 
 
 def test_infer_recently_from_week_sets_now():
-    previous_last_online = pytz.utc.localize(datetime.datetime(2020, 1, 1))
+    previous_last_online = pytz.utc.localize(datetime.datetime.utcnow()) - datetime.timedelta(days=1)
+    before = pytz.utc.localize(datetime.datetime.utcnow()) - datetime.timedelta(days=1, seconds=1)
     status, last_online = infer_online_status(
         types.UserStatusRecently(),
         previous_status="within a week",
         previous_last_online=previous_last_online,
     )
+    after = pytz.utc.localize(datetime.datetime.utcnow()) - datetime.timedelta(days=1) + datetime.timedelta(seconds=1)
     assert status == "recently"
     assert isinstance(last_online, datetime.datetime)
-    assert last_online > previous_last_online
+    assert before <= last_online <= after
 
 
 def test_infer_week_clamps_to_week_ago():
     old = pytz.utc.localize(datetime.datetime.utcnow()) - datetime.timedelta(days=1)
-    before = pytz.utc.localize(datetime.datetime.utcnow()) - datetime.timedelta(
-        days=7, seconds=1
-    )
     status, last_online = infer_online_status(
         types.UserStatusLastWeek(),
         previous_status="recently",
         previous_last_online=old,
     )
-    after = (
-        pytz.utc.localize(datetime.datetime.utcnow())
-        - datetime.timedelta(days=7)
-        + datetime.timedelta(seconds=1)
-    )
+    before = pytz.utc.localize(datetime.datetime.utcnow()) - datetime.timedelta(days=1, seconds=1)
+    after = pytz.utc.localize(datetime.datetime.utcnow()) - datetime.timedelta(days=1) + datetime.timedelta(seconds=1)
     assert status == "within a week"
     assert isinstance(last_online, datetime.datetime)
     assert before <= last_online <= after
@@ -66,14 +62,18 @@ def test_infer_offline_uses_was_online():
     assert last_online == was_online
 
 
-def test_infer_last_month_with_very_old_previous_becomes_long_time_ago():
+def test_infer_last_month_clamps_to_calendar_month_ago():
     old = pytz.utc.localize(datetime.datetime.utcnow()) - datetime.timedelta(days=90)
-    status, _ = infer_online_status(
+    status, last_online = infer_online_status(
         types.UserStatusLastMonth(),
         previous_status="within a month",
         previous_last_online=old,
     )
-    assert status == "long time ago"
+    expected = one_month_ago(pytz.utc.localize(datetime.datetime.utcnow()))
+    before = expected - datetime.timedelta(seconds=1)
+    after = expected + datetime.timedelta(seconds=1)
+    assert status == "within a month"
+    assert before <= last_online <= after
 
 
 def test_relative_to_now_minutes():

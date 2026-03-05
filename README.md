@@ -47,10 +47,10 @@ When you run `telesaver.py status`, the tool:
 
 * `online`: set `last_online` to now
 * `offline`: set `last_online` to Telegram `was_online` timestamp
-* `recently`: keep existing `last_online`, except when previous status was `within a week` or `within a month` (then set to now)
-* `within a week`: clamp `last_online` to at most `now - 7 days`
-* `within a month`: clamp `last_online` to at most `now - 30 days`
-* if fuzzy status is older than one month (based on `last_online`), status is normalized to `long time ago`
+* `recently`: set `last_online` with `max(previous_last_online, now - 3 days)`
+* `within a week`: set `last_online` with `max(previous_last_online, now - 7 days)`
+* `within a month`: set `last_online` with `max(previous_last_online, now - 1 calendar month)`
+* `long time ago`: no minimum-date clamp is applied (kept as is)
 
 At the end, it prints a table with top 20 dialogs sorted by `last_online` desc, with a secondary order for same timestamps:
 

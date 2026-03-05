@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import argparse
+import calendar
 import datetime
 import logging
 import os
@@ -49,6 +50,18 @@ def ensure_utc(value):
     return value
 
 
+def one_month_ago(now):
+    now = ensure_utc(now) or utcnow()
+    year = now.year
+    month = now.month - 1
+    if month == 0:
+        month = 12
+        year -= 1
+    max_day = calendar.monthrange(year, month)[1]
+    day = min(now.day, max_day)
+    return now.replace(year=year, month=month, day=day)
+
+
 def normalize_presence_status(status, last_online, now=None):
     if status not in {"recently", WITHIN_A_WEEK, WITHIN_A_MONTH}:
         return status
@@ -56,7 +69,7 @@ def normalize_presence_status(status, last_online, now=None):
     if not last_online:
         return status
     now = ensure_utc(now) or utcnow()
-    if now - last_online > datetime.timedelta(days=30):
+    if last_online < one_month_ago(now):
         return LONG_TIME_AGO
     return status
 
@@ -69,6 +82,13 @@ def status_rank(status):
         LONG_TIME_AGO: 4,
     }
     return rank.get(status or "", 99)
+
+
+def clamp_fuzzy_last_online(previous_last_online, min_timestamp):
+    previous_last_online = ensure_utc(previous_last_online)
+    if not previous_last_online:
+        return min_timestamp
+    return max(previous_last_online, min_timestamp)
 
 
 def relative_to_now(value, now=None):
@@ -164,28 +184,20 @@ def infer_online_status(status, previous_status=None, previous_last_online=None)
     elif isinstance(status, types.UserStatusOffline):
         new_status, new_last_online = "offline", ensure_utc(status.was_online)
     elif isinstance(status, types.UserStatusRecently):
-        if previous_status in {WITHIN_A_WEEK, WITHIN_A_MONTH}:
-            new_status, new_last_online = "recently", now
-        else:
-            new_status, new_last_online = "recently", previous_last_online
+        recent_bound = now - datetime.timedelta(days=3)
+        new_status, new_last_online = "recently", clamp_fuzzy_last_online(
+            previous_last_online, min_timestamp=recent_bound
+        )
     elif isinstance(status, types.UserStatusLastWeek):
-        week_ago = now - datetime.timedelta(days=7)
-        if previous_last_online:
-            new_status, new_last_online = (
-                WITHIN_A_WEEK,
-                min(previous_last_online, week_ago),
-            )
-        else:
-            new_status, new_last_online = WITHIN_A_WEEK, week_ago
+        week_bound = now - datetime.timedelta(days=7)
+        new_status, new_last_online = WITHIN_A_WEEK, clamp_fuzzy_last_online(
+            previous_last_online, min_timestamp=week_bound
+        )
     elif isinstance(status, types.UserStatusLastMonth):
-        month_ago = now - datetime.timedelta(days=30)
-        if previous_last_online:
-            new_status, new_last_online = (
-                WITHIN_A_MONTH,
-                min(previous_last_online, month_ago),
-            )
-        else:
-            new_status, new_last_online = WITHIN_A_MONTH, month_ago
+        month_bound = one_month_ago(now)
+        new_status, new_last_online = WITHIN_A_MONTH, clamp_fuzzy_last_online(
+            previous_last_online, min_timestamp=month_bound
+        )
     elif isinstance(status, types.UserStatusEmpty):
         new_status, new_last_online = "empty", previous_last_online
     else:
