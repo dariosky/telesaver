@@ -112,14 +112,20 @@ async def wait_for_updates(
                         try:
                             await periodic_status_callback()
                         except Exception as e:
-                            logger.error(f"Periodic status refresh failed: {e}")
+                            logger.exception(f"Periodic status refresh failed: {e}")
                         await sleep(periodic_status_interval_seconds)
 
                 periodic_task = create_task(periodic_status_runner())
 
             logger.info("Waiting for updates...")
             await client.run_until_disconnected()
-        except ConnectionError:
+        except ConnectionError as e:
+            logger.warning(f"Connection error in listen loop: {e}. Reconnecting in 10s")
+            await sleep(10)
+        except Exception as e:
+            logger.exception(
+                f"Unexpected error in listen loop: {e}. Reconnecting in 10s"
+            )
             await sleep(10)
         finally:
             if periodic_task:

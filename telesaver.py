@@ -527,32 +527,38 @@ async def main(
     )
     if listen:
         print("Listening for Telegram updates...")
-        
+
         async def refresh_statuses():
-            await update_all_statuses(client=client, store=store, print_report=False)
+            try:
+                await update_all_statuses(client=client, store=store, print_report=False)
+            except Exception as e:
+                logger.exception(f"Status refresh failed while listening: {e}")
 
         async def update_user_status(user):
-            if not isinstance(user, types.User):
-                return
-            if user.id not in store.dialog_names:
-                return
-            saver.save_dialog(user.id, utils.get_display_name(user))
-            if user.bot:
+            try:
+                if not isinstance(user, types.User):
+                    return
+                if user.id not in store.dialog_names:
+                    return
+                saver.save_dialog(user.id, utils.get_display_name(user))
+                if user.bot:
+                    store.set_dialog_status(
+                        user.id, telegram_online_status=None, last_online=None
+                    )
+                    store.save()
+                    return
+                known_dialog = store.dialog_names.get(user.id, {})
+                status, last_online = infer_online_status(
+                    user.status,
+                    previous_status=known_dialog.get("telegram_online_status"),
+                    previous_last_online=known_dialog.get("last_online"),
+                )
                 store.set_dialog_status(
-                    user.id, telegram_online_status=None, last_online=None
+                    user.id, telegram_online_status=status, last_online=last_online
                 )
                 store.save()
-                return
-            known_dialog = store.dialog_names.get(user.id, {})
-            status, last_online = infer_online_status(
-                user.status,
-                previous_status=known_dialog.get("telegram_online_status"),
-                previous_last_online=known_dialog.get("last_online"),
-            )
-            store.set_dialog_status(
-                user.id, telegram_online_status=status, last_online=last_online
-            )
-            store.save()
+            except Exception as e:
+                logger.exception(f"Failed to process user status update: {e}")
 
         await wait_for_updates(
             saver,
