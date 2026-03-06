@@ -61,5 +61,13 @@ At the end, it prints a table with top 20 dialogs sorted by `last_online` desc, 
 
 `last_update` in the table is shown relative to now (for example `10 minutes ago`, `10 hours ago`, `3 weeks ago`).
 
+### Listen mode and presence updates
+
+When running with `--listen`:
+
+* message/read/edit/delete updates are tracked and stored
+* `UserUpdate` events are also consumed; if a known non-bot user is seen `online`, `last_online` is set to now via the same status logic
+* a periodic status refresh runs every 30 minutes as a fallback (for fuzzy transitions that may not arrive as events)
+
 As you may guess with the 2nd option - when he finds a new self-destructing-message
 it will forward it to you unless you ask otherwise.

@@ -1,4 +1,6 @@
 import logging
+from asyncio import CancelledError
+from asyncio import create_task
 from asyncio import sleep
 from datetime import datetime
 
@@ -41,7 +43,12 @@ async def filter_event(event):
         return True
 
 
-async def wait_for_updates(saver):
+async def wait_for_updates(
+    saver,
+    on_user_update=None,
+    periodic_status_callback=None,
+    periodic_status_interval_seconds=None,
+):
     """
     :type saver: DialogSaver
     """
@@ -76,13 +83,48 @@ async def wait_for_updates(saver):
                 )
             saver.commit()
 
+    @client.on(events.UserUpdate())
+    async def user_update_handler(event):
+        if on_user_update is None:
+            return
+        try:
+            user = await event.get_user()
+            if user is not None:
+                await on_user_update(user)
+        except Exception as e:
+            logger.error(f"Error while handling user update: {e}")
+
     while True:
+        periodic_task = None
         try:
             await client.connect()
             logger.info("Catching up")
             await client.catch_up()
 
+            if periodic_status_callback and periodic_status_interval_seconds:
+                logger.info(
+                    "Starting periodic status refresh every "
+                    f"{periodic_status_interval_seconds // 60} minutes"
+                )
+
+                async def periodic_status_runner():
+                    while True:
+                        try:
+                            await periodic_status_callback()
+                        except Exception as e:
+                            logger.error(f"Periodic status refresh failed: {e}")
+                        await sleep(periodic_status_interval_seconds)
+
+                periodic_task = create_task(periodic_status_runner())
+
             logger.info("Waiting for updates...")
             await client.run_until_disconnected()
         except ConnectionError:
             await sleep(10)
+        finally:
+            if periodic_task:
+                periodic_task.cancel()
+                try:
+                    await periodic_task
+                except CancelledError:
+                    pass

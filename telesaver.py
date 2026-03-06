@@ -527,7 +527,39 @@ async def main(
     )
     if listen:
         print("Listening for Telegram updates...")
-        await wait_for_updates(saver)
+        
+        async def refresh_statuses():
+            await update_all_statuses(client=client, store=store, print_report=False)
+
+        async def update_user_status(user):
+            if not isinstance(user, types.User):
+                return
+            if user.id not in store.dialog_names:
+                return
+            saver.save_dialog(user.id, utils.get_display_name(user))
+            if user.bot:
+                store.set_dialog_status(
+                    user.id, telegram_online_status=None, last_online=None
+                )
+                store.save()
+                return
+            known_dialog = store.dialog_names.get(user.id, {})
+            status, last_online = infer_online_status(
+                user.status,
+                previous_status=known_dialog.get("telegram_online_status"),
+                previous_last_online=known_dialog.get("last_online"),
+            )
+            store.set_dialog_status(
+                user.id, telegram_online_status=status, last_online=last_online
+            )
+            store.save()
+
+        await wait_for_updates(
+            saver,
+            on_user_update=update_user_status,
+            periodic_status_callback=refresh_statuses,
+            periodic_status_interval_seconds=30 * 60,
+        )
     else:
         await saver.run(
             # recent_only=recent_only,
@@ -535,8 +567,11 @@ async def main(
         )
 
 
-async def main_status(client: "TelegramClient", store: "Store"):
+async def update_all_statuses(
+    client: "TelegramClient", store: "Store", print_report=False, report_limit=20
+):
     saver = DialogSaver(client=client, store=store)
+    bot_dialog_ids = set()
     async for dialog in client.iter_dialogs():
         if not await filter_event(dialog):
             continue
@@ -547,6 +582,12 @@ async def main_status(client: "TelegramClient", store: "Store"):
         previous_last_online = known_dialog.get("last_online")
 
         entity = dialog.entity
+        if isinstance(entity, types.User) and entity.bot:
+            bot_dialog_ids.add(dialog.id)
+            store.set_dialog_status(
+                dialog.id, telegram_online_status=None, last_online=None
+            )
+            continue
         if not isinstance(entity, types.User):
             store.set_dialog_status(
                 dialog.id, telegram_online_status=None, last_online=None
@@ -565,9 +606,15 @@ async def main_status(client: "TelegramClient", store: "Store"):
         )
     store.save()
 
-    top = store.top_dialogs_by_last_online(limit=20)
-    print("Top 20 dialogs by last_online")
-    print_status_table(top)
+    if print_report:
+        top = store.top_dialogs_by_last_online(limit=200)
+        top = [row for row in top if row["id"] not in bot_dialog_ids][:report_limit]
+        print(f"Top {report_limit} dialogs by last_online")
+        print_status_table(top)
+
+
+async def main_status(client: "TelegramClient", store: "Store"):
+    await update_all_statuses(client=client, store=store, print_report=True)
 
 
 if __name__ == "__main__":
